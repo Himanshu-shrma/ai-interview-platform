@@ -66,6 +66,7 @@ openai:
 interview:
   free-tier-limit: 3
   redis-ttl-hours: 2
+  transcript-max-turns: 6
 
 # ── Rate limiting ─────────────────────────────────────────────────────────────
 rate-limit:
