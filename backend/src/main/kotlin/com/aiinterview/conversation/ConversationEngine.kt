@@ -5,6 +5,7 @@ import com.aiinterview.interview.repository.ConversationMessageRepository
 import com.aiinterview.interview.service.RedisMemoryService
 import com.aiinterview.interview.ws.OutboundMessage
 import com.aiinterview.interview.ws.WsSessionRegistry
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -76,7 +77,10 @@ class ConversationEngine(
         transition(sessionId, InterviewState.AiAnalyzing)
 
         // Background analysis (fire-and-forget — do NOT await)
-        backgroundScope.launch {
+        val handler = CoroutineExceptionHandler { _, e ->
+            log.error("AgentOrchestrator failed for session {}", sessionId, e)
+        }
+        backgroundScope.launch(handler) {
             agentOrchestrator.analyzeAndTransition(sessionId, content)
         }
     }

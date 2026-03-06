@@ -1,10 +1,16 @@
 package com.aiinterview.interview.ws
 
+import com.aiinterview.code.service.CodeExecutionService
 import com.aiinterview.conversation.ConversationEngine
 import com.aiinterview.conversation.HintGenerator
 import com.aiinterview.conversation.InterviewState
 import com.aiinterview.interview.service.RedisMemoryService
 import com.fasterxml.jackson.databind.ObjectMapper
+import kotlinx.coroutines.CoroutineExceptionHandler
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.reactor.mono
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Component
@@ -19,8 +25,12 @@ class InterviewWebSocketHandler(
     private val redisMemoryService: RedisMemoryService,
     private val conversationEngine: ConversationEngine,
     private val hintGenerator: HintGenerator,
+    private val codeExecutionService: CodeExecutionService,
     private val objectMapper: ObjectMapper,
 ) : WebSocketHandler {
+
+    /** Fire-and-forget scope for code execution (same pattern as ConversationEngine). */
+    private val codeScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     private val log = LoggerFactory.getLogger(InterviewWebSocketHandler::class.java)
 
@@ -89,8 +99,22 @@ class InterviewWebSocketHandler(
 
             "CODE_RUN" -> {
                 val msg = objectMapper.treeToValue(tree, InboundMessage.CodeRun::class.java)
-                // TODO (Prompt 10): route to Judge0 code execution
-                log.debug("CODE_RUN from {}: language={}", sessionId, msg.language)
+                val handler = CoroutineExceptionHandler { _, e ->
+                    log.error("CODE_RUN failed for session {}: {}", sessionId, e.message)
+                }
+                codeScope.launch(handler) {
+                    codeExecutionService.runCode(sessionId, msg.code, msg.language, msg.stdin)
+                }
+            }
+
+            "CODE_SUBMIT" -> {
+                val msg = objectMapper.treeToValue(tree, InboundMessage.CodeSubmit::class.java)
+                val handler = CoroutineExceptionHandler { _, e ->
+                    log.error("CODE_SUBMIT failed for session {}: {}", sessionId, e.message)
+                }
+                codeScope.launch(handler) {
+                    codeExecutionService.submitCode(sessionId, msg.sessionQuestionId, msg.code, msg.language)
+                }
             }
 
             "CODE_UPDATE" -> {

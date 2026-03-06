@@ -86,6 +86,8 @@ judge0:
   base-url: ${JUDGE0_BASE_URL:http://localhost:2358}
   auth-token: ${JUDGE0_AUTH_TOKEN:judge0_dev_token_replace_in_production}
   auth-header: ${JUDGE0_AUTH_HEADER:X-Auth-Token}
+  poll-interval-ms: 500
+  poll-timeout-seconds: 30
 
 # ── Logging ─────────────────────────────────────────────────────────────────
 logging:

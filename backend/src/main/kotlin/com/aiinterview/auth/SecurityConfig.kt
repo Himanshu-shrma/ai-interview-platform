@@ -24,7 +24,7 @@ class SecurityConfig {
             .securityContextRepository(NoOpServerSecurityContextRepository.getInstance())
             .authorizeExchange { exchanges ->
                 exchanges
-                    .pathMatchers("/health", "/actuator/**", "/ws/**").permitAll()
+                    .pathMatchers("/health", "/actuator/**", "/ws/**", "/api/v1/code/languages").permitAll()
                     .pathMatchers("/api/**").authenticated()
                     .anyExchange().permitAll()
             }
