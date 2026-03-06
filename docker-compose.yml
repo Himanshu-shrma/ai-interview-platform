@@ -1,0 +1,103 @@
+services:
+
+  # ─── Application Database ──────────────────────────────────────────────────
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-aiinterview}
+      POSTGRES_USER: ${POSTGRES_USER:-aiinterview}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-aiinterview} -d ${POSTGRES_DB:-aiinterview}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  # ─── Application Redis ─────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  # ─── Judge0 Internal Database ──────────────────────────────────────────────
+  # Separate from the app DB — Judge0 owns this entirely.
+  judge0-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: judge0
+      POSTGRES_USER: judge0
+      POSTGRES_PASSWORD: ${JUDGE0_DB_PASSWORD:-judge0secret}
+    volumes:
+      - judge0_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U judge0 -d judge0"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  # ─── Judge0 Internal Redis ─────────────────────────────────────────────────
+  # Used by Judge0 for its Resque job queue — separate from the app Redis.
+  judge0-redis:
+    image: redis:7-alpine
+    command: redis-server --appendonly yes --requirepass ${JUDGE0_REDIS_PASSWORD:-judge0secret}
+    volumes:
+      - judge0_redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${JUDGE0_REDIS_PASSWORD:-judge0secret}", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  # ─── Judge0 CE API Server ──────────────────────────────────────────────────
+  # Exposes REST API on port 2358. Backend calls this for code execution.
+  # privileged: true is required for Judge0's seccomp sandbox.
+  judge0-server:
+    image: judge0/judge0:1.13.1
+    volumes:
+      - ./judge0/judge0.conf:/judge0.conf:ro
+    ports:
+      - "2358:2358"
+    privileged: true
+    restart: unless-stopped
+    depends_on:
+      judge0-db:
+        condition: service_healthy
+      judge0-redis:
+        condition: service_healthy
+
+  # ─── Judge0 CE Workers ─────────────────────────────────────────────────────
+  # Resque workers that pick up and execute code submissions.
+  judge0-worker:
+    image: judge0/judge0:1.13.1
+    command: ["./scripts/workers"]
+    volumes:
+      - ./judge0/judge0.conf:/judge0.conf:ro
+    privileged: true
+    restart: unless-stopped
+    depends_on:
+      judge0-db:
+        condition: service_healthy
+      judge0-redis:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
+  redis_data:
+  judge0_postgres_data:
+  judge0_redis_data:
