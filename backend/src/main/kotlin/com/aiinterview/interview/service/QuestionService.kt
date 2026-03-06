@@ -2,9 +2,6 @@ package com.aiinterview.interview.service
 
 import com.aiinterview.interview.model.Question
 import com.aiinterview.interview.repository.QuestionRepository
-import com.aiinterview.shared.domain.Difficulty
-import com.aiinterview.shared.domain.InterviewCategory
-import com.fasterxml.jackson.databind.ObjectMapper
 import kotlinx.coroutines.reactor.awaitSingle
 import kotlinx.coroutines.reactor.awaitSingleOrNull
 import org.slf4j.LoggerFactory
@@ -16,7 +13,6 @@ import java.util.UUID
 class QuestionService(
     private val questionRepository: QuestionRepository,
     private val questionGeneratorService: QuestionGeneratorService,
-    private val objectMapper: ObjectMapper,
 ) {
     private val log = LoggerFactory.getLogger(QuestionService::class.java)
 
@@ -45,25 +41,16 @@ class QuestionService(
     /**
      * Selects [count] distinct questions for a session, calling getOrGenerateQuestion
      * with progressive exclusion to prevent duplicates.
-     * Note: InterviewConfig is defined in Prompt 6 — this signature uses direct params
-     * and will be updated when InterviewConfig is available.
      */
-    suspend fun selectQuestionsForSession(
-        category: InterviewCategory,
-        difficulty: Difficulty,
-        count: Int,
-        topic: String = "general",
-        targetCompany: String? = null,
-        targetRole: String? = null,
-    ): List<Question> {
+    suspend fun selectQuestionsForSession(config: InterviewConfig, count: Int): List<Question> {
         val selected = mutableListOf<Question>()
         val excludeIds = mutableListOf<UUID>()
         val params = QuestionGenerationParams(
-            category      = category,
-            difficulty    = difficulty,
-            topic         = topic,
-            targetCompany = targetCompany,
-            targetRole    = targetRole,
+            category      = config.category,
+            difficulty    = config.difficulty,
+            topic         = "general",
+            targetCompany = config.targetCompany,
+            targetRole    = config.targetRole,
         )
         repeat(count) {
             val q = getOrGenerateQuestion(params, excludeIds)

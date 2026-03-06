@@ -10,4 +10,6 @@ interface InterviewSessionRepository : ReactiveCrudRepository<InterviewSession, 
     fun findByUserId(userId: UUID): Flux<InterviewSession>
     fun findByIdAndUserId(id: UUID, userId: UUID): Mono<InterviewSession>
     fun findByUserIdAndStatus(userId: UUID, status: String): Flux<InterviewSession>
+    fun findByUserIdOrderByCreatedAtDesc(userId: UUID): Flux<InterviewSession>
+    fun countByUserId(userId: UUID): Mono<Long>
 }

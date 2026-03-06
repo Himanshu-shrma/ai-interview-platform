@@ -2,12 +2,12 @@ package com.aiinterview.interview
 
 import com.aiinterview.interview.model.Question
 import com.aiinterview.interview.repository.QuestionRepository
+import com.aiinterview.interview.service.InterviewConfig
 import com.aiinterview.interview.service.QuestionGenerationParams
 import com.aiinterview.interview.service.QuestionGeneratorService
 import com.aiinterview.interview.service.QuestionService
 import com.aiinterview.shared.domain.Difficulty
 import com.aiinterview.shared.domain.InterviewCategory
-import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
@@ -26,8 +26,7 @@ class QuestionServiceTest {
 
     private val questionRepository       = mockk<QuestionRepository>()
     private val questionGeneratorService = mockk<QuestionGeneratorService>()
-    private val objectMapper             = jacksonObjectMapper()
-    private val service                  = QuestionService(questionRepository, questionGeneratorService, objectMapper)
+    private val service                  = QuestionService(questionRepository, questionGeneratorService)
 
     private val codingParams = QuestionGenerationParams(
         category   = InterviewCategory.CODING,
@@ -142,10 +141,11 @@ class QuestionServiceTest {
         every { questionRepository.findRandomCandidates("CODING", "MEDIUM") } returns Flux.just(q1, q2)
 
         val results = service.selectQuestionsForSession(
-            category   = InterviewCategory.CODING,
-            difficulty = Difficulty.MEDIUM,
-            count      = 2,
-            topic      = "arrays",
+            config = InterviewConfig(
+                category   = InterviewCategory.CODING,
+                difficulty = Difficulty.MEDIUM,
+            ),
+            count = 2,
         )
 
         assertEquals(2, results.size)
