@@ -5,6 +5,8 @@ import com.aiinterview.interview.service.InterviewConfig
 import com.aiinterview.interview.service.RedisMemoryService
 import com.aiinterview.interview.service.SessionNotFoundException
 import com.aiinterview.interview.service.TranscriptCompressor
+import io.mockk.coEvery
+import io.mockk.mockk
 import com.aiinterview.shared.domain.Difficulty
 import com.aiinterview.shared.domain.InterviewCategory
 import com.fasterxml.jackson.databind.DeserializationFeature
@@ -46,7 +48,7 @@ class RedisMemoryServiceTest {
         configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false)
     }
 
-    private val compressor = TranscriptCompressor()
+    private val compressor = mockk<TranscriptCompressor>()
 
     private lateinit var connectionFactory: LettuceConnectionFactory
     private lateinit var redisTemplate: ReactiveStringRedisTemplate
@@ -95,6 +97,12 @@ class RedisMemoryServiceTest {
             ttlHours             = 1,
             maxTranscriptTurns   = 6,
         )
+        // Stub compressor to return a deterministic summary containing turn content
+        coEvery { compressor.compress(any()) } answers {
+            val turns = firstArg<List<com.aiinterview.interview.service.TranscriptTurn>>()
+            turns.joinToString(" | ") { "${it.role}: ${it.content}" }
+        }
+
         // Flush all keys before each test
         runBlocking {
             val keys = redisTemplate.keys("*").collectList().awaitSingle()

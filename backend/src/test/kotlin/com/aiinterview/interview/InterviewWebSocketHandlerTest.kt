@@ -1,5 +1,6 @@
 package com.aiinterview.interview
 
+import com.aiinterview.conversation.ConversationEngine
 import com.aiinterview.interview.service.InterviewMemory
 import com.aiinterview.interview.service.RedisMemoryService
 import com.aiinterview.interview.ws.ATTR_SESSION_ID
@@ -33,9 +34,10 @@ class InterviewWebSocketHandlerTest {
         configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false)
     }
 
-    private val registry      = mockk<WsSessionRegistry>(relaxed = true)
-    private val memoryService = mockk<RedisMemoryService>()
-    private val handler       = InterviewWebSocketHandler(registry, memoryService, objectMapper)
+    private val registry          = mockk<WsSessionRegistry>(relaxed = true)
+    private val memoryService     = mockk<RedisMemoryService>()
+    private val conversationEngine = mockk<ConversationEngine>(relaxed = true)
+    private val handler           = InterviewWebSocketHandler(registry, memoryService, conversationEngine, objectMapper)
 
     private val sessionId = UUID.randomUUID()
     private val userId    = UUID.randomUUID()
@@ -60,8 +62,9 @@ class InterviewWebSocketHandlerTest {
     // ── connect / reconnect ───────────────────────────────────────────────────
 
     @Test
-    fun `connect with no existing memory sends INTERVIEW_STARTED`() {
-        coEvery { memoryService.memoryExists(sessionId) } returns false
+    fun `connect with memory in INTERVIEW_STARTING state sends INTERVIEW_STARTED`() {
+        coEvery { memoryService.memoryExists(sessionId) } returns true
+        coEvery { memoryService.getMemory(sessionId) } returns buildMemory("INTERVIEW_STARTING")
         coEvery { registry.sendMessage(sessionId, any()) } returns true
 
         inboundSink.tryEmitComplete()
@@ -69,6 +72,21 @@ class InterviewWebSocketHandlerTest {
 
         coVerify {
             registry.sendMessage(sessionId, match { it is OutboundMessage.InterviewStarted })
+        }
+    }
+
+    @Test
+    fun `connect with no existing memory sends SESSION_NOT_FOUND error`() {
+        coEvery { memoryService.memoryExists(sessionId) } returns false
+        coEvery { registry.sendMessage(sessionId, any()) } returns true
+
+        inboundSink.tryEmitComplete()
+        handler.handle(wsSession).block()
+
+        coVerify {
+            registry.sendMessage(sessionId, match {
+                it is OutboundMessage.Error && it.code == "SESSION_NOT_FOUND"
+            })
         }
     }
 

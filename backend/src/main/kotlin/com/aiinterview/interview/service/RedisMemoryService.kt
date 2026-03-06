@@ -84,20 +84,21 @@ class RedisMemoryService(
      * Appends a new transcript turn and triggers compression when the rolling
      * transcript exceeds [maxTranscriptTurns].
      *
-     * Compression stub: the oldest 2 turns are formatted as
-     * "ROLE: content | ROLE: content" and prepended to [InterviewMemory.earlierContext].
+     * Compression calls [TranscriptCompressor.compress] (suspend) outside the
+     * non-suspend updateMemory lambda, then saves the result atomically.
      */
     suspend fun appendTranscriptTurn(
         sessionId: UUID,
         role: String,
         content: String,
-    ): InterviewMemory = updateMemory(sessionId) { memory ->
+    ): InterviewMemory {
+        val memory  = getMemory(sessionId)
         val newTurn = TranscriptTurn(role = role, content = content)
         val updated = memory.rollingTranscript + newTurn
 
         val (transcript, earlierContext) = if (updated.size > maxTranscriptTurns) {
-            val oldest = updated.take(2)
-            val compressed = transcriptCompressor.compress(oldest)
+            val oldest     = updated.take(2)
+            val compressed = transcriptCompressor.compress(oldest)   // suspend — OK here
             val newContext = if (memory.earlierContext.isBlank()) compressed
                             else "$compressed | ${memory.earlierContext}"
             log.debug("Compressed {} turns for session {}", oldest.size, sessionId)
@@ -106,11 +107,13 @@ class RedisMemoryService(
             updated to memory.earlierContext
         }
 
-        memory.copy(
+        val newMemory = memory.copy(
             rollingTranscript = transcript,
             earlierContext    = earlierContext,
             lastActivityAt    = Instant.now(),
         )
+        saveMemory(sessionId, newMemory)
+        return newMemory
     }
 
     /**
