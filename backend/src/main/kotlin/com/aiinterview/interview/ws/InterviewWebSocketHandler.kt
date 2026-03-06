@@ -1,6 +1,7 @@
 package com.aiinterview.interview.ws
 
 import com.aiinterview.conversation.ConversationEngine
+import com.aiinterview.conversation.HintGenerator
 import com.aiinterview.conversation.InterviewState
 import com.aiinterview.interview.service.RedisMemoryService
 import com.fasterxml.jackson.databind.ObjectMapper
@@ -17,6 +18,7 @@ class InterviewWebSocketHandler(
     private val registry: WsSessionRegistry,
     private val redisMemoryService: RedisMemoryService,
     private val conversationEngine: ConversationEngine,
+    private val hintGenerator: HintGenerator,
     private val objectMapper: ObjectMapper,
 ) : WebSocketHandler {
 
@@ -99,9 +101,13 @@ class InterviewWebSocketHandler(
             }
 
             "REQUEST_HINT" -> {
-                val msg = objectMapper.treeToValue(tree, InboundMessage.RequestHint::class.java)
-                // TODO (Prompt 10): route to HintGenerator agent
-                log.debug("REQUEST_HINT from {}: level={}", sessionId, msg.hintLevel)
+                try {
+                    val memory = redisMemoryService.getMemory(sessionId)
+                    hintGenerator.generateHint(memory)
+                } catch (e: Exception) {
+                    log.error("Failed to generate hint for session {}: {}", sessionId, e.message)
+                    registry.sendMessage(sessionId, OutboundMessage.Error("HINT_ERROR", "Failed to generate hint"))
+                }
             }
 
             "END_INTERVIEW" -> {

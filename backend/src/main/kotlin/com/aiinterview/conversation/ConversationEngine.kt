@@ -11,6 +11,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.slf4j.LoggerFactory
+import org.springframework.context.annotation.Lazy
 import org.springframework.stereotype.Service
 import java.util.UUID
 
@@ -22,6 +23,10 @@ import java.util.UUID
  * - Routing candidate messages to the Interviewer Agent
  * - Kicking off background analysis (AgentOrchestrator — fire-and-forget)
  * - Driving the interview start sequence (opening question presentation)
+ *
+ * [agentOrchestrator] uses @Lazy to break the circular dependency:
+ *   ConversationEngine → AgentOrchestrator → InterviewerAgent ✓
+ *   AgentOrchestrator does NOT inject ConversationEngine ✓
  */
 @Service
 class ConversationEngine(
@@ -29,6 +34,7 @@ class ConversationEngine(
     private val interviewerAgent: InterviewerAgent,
     private val registry: WsSessionRegistry,
     private val conversationMessageRepository: ConversationMessageRepository,
+    @Lazy private val agentOrchestrator: AgentOrchestrator,
 ) {
     private val log = LoggerFactory.getLogger(ConversationEngine::class.java)
 
@@ -71,8 +77,7 @@ class ConversationEngine(
 
         // Background analysis (fire-and-forget — do NOT await)
         backgroundScope.launch {
-            // TODO (Prompt 10): AgentOrchestrator.analyze(sessionId)
-            log.debug("Background analysis queued for session {}", sessionId)
+            agentOrchestrator.analyzeAndTransition(sessionId, content)
         }
     }
 

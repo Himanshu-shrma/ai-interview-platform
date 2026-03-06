@@ -1,6 +1,7 @@
 package com.aiinterview.interview
 
 import com.aiinterview.conversation.ConversationEngine
+import com.aiinterview.conversation.HintGenerator
 import com.aiinterview.interview.service.InterviewMemory
 import com.aiinterview.interview.service.RedisMemoryService
 import com.aiinterview.interview.ws.ATTR_SESSION_ID
@@ -34,10 +35,11 @@ class InterviewWebSocketHandlerTest {
         configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false)
     }
 
-    private val registry          = mockk<WsSessionRegistry>(relaxed = true)
-    private val memoryService     = mockk<RedisMemoryService>()
+    private val registry           = mockk<WsSessionRegistry>(relaxed = true)
+    private val memoryService      = mockk<RedisMemoryService>()
     private val conversationEngine = mockk<ConversationEngine>(relaxed = true)
-    private val handler           = InterviewWebSocketHandler(registry, memoryService, conversationEngine, objectMapper)
+    private val hintGenerator      = mockk<HintGenerator>(relaxed = true)
+    private val handler            = InterviewWebSocketHandler(registry, memoryService, conversationEngine, hintGenerator, objectMapper)
 
     private val sessionId = UUID.randomUUID()
     private val userId    = UUID.randomUUID()

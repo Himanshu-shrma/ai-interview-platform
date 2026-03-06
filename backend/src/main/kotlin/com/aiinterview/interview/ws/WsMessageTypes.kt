@@ -33,6 +33,7 @@ sealed class InboundMessage {
     JsonSubTypes.Type(value = OutboundMessage.StateChange::class,       name = "STATE_CHANGE"),
     JsonSubTypes.Type(value = OutboundMessage.CodeRunResult::class,     name = "CODE_RUN_RESULT"),
     JsonSubTypes.Type(value = OutboundMessage.HintResponse::class,      name = "HINT_RESPONSE"),
+    JsonSubTypes.Type(value = OutboundMessage.HintDelivered::class,     name = "HINT_DELIVERED"),
     JsonSubTypes.Type(value = OutboundMessage.InterviewEnded::class,    name = "INTERVIEW_ENDED"),
     JsonSubTypes.Type(value = OutboundMessage.Error::class,             name = "ERROR"),
     JsonSubTypes.Type(value = OutboundMessage.Pong::class,              name = "PONG"),
@@ -44,6 +45,7 @@ sealed class OutboundMessage {
     data class StateChange(val state: String) : OutboundMessage()
     data class CodeRunResult(val stdout: String?, val stderr: String?, val exitCode: Int?) : OutboundMessage()
     data class HintResponse(val hint: String, val hintsGiven: Int) : OutboundMessage()
+    data class HintDelivered(val hint: String, val level: Int, val hintsRemaining: Int, val refused: Boolean = false) : OutboundMessage()
     data class InterviewEnded(val reason: String, val overallScore: Double) : OutboundMessage()
     data class Error(val code: String, val message: String) : OutboundMessage()
     class Pong : OutboundMessage()

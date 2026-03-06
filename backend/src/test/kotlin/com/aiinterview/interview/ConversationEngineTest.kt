@@ -1,5 +1,6 @@
 package com.aiinterview.interview
 
+import com.aiinterview.conversation.AgentOrchestrator
 import com.aiinterview.conversation.ConversationEngine
 import com.aiinterview.conversation.InterviewState
 import com.aiinterview.conversation.InterviewerAgent
@@ -21,16 +22,18 @@ import java.util.UUID
 
 class ConversationEngineTest {
 
-    private val redisMemoryService     = mockk<RedisMemoryService>()
-    private val interviewerAgent       = mockk<InterviewerAgent>(relaxed = true)
-    private val registry               = mockk<WsSessionRegistry>(relaxed = true)
-    private val messageRepository      = mockk<ConversationMessageRepository>()
+    private val redisMemoryService = mockk<RedisMemoryService>()
+    private val interviewerAgent   = mockk<InterviewerAgent>(relaxed = true)
+    private val registry           = mockk<WsSessionRegistry>(relaxed = true)
+    private val messageRepository  = mockk<ConversationMessageRepository>()
+    private val agentOrchestrator  = mockk<AgentOrchestrator>(relaxed = true)
 
     private val engine = ConversationEngine(
-        redisMemoryService        = redisMemoryService,
-        interviewerAgent          = interviewerAgent,
-        registry                  = registry,
+        redisMemoryService            = redisMemoryService,
+        interviewerAgent              = interviewerAgent,
+        registry                      = registry,
         conversationMessageRepository = messageRepository,
+        agentOrchestrator             = agentOrchestrator,
     )
 
     private val sessionId = UUID.randomUUID()

@@ -36,9 +36,11 @@ data class TranscriptTurn(
 @JsonIgnoreProperties(ignoreUnknown = true)
 data class CandidateAnalysis(
     val approach: String? = null,
-    val confidence: String? = null,     // high/medium/low
-    val correctness: String? = null,    // correct/partial/incorrect
+    val confidence: String? = null,         // high/medium/low
+    val correctness: String? = null,        // correct/partial/incorrect
     val gaps: List<String> = emptyList(),
+    val codingSignalDetected: Boolean = false,
+    val readyForEvaluation: Boolean = false,
     val lastUpdatedAt: Instant? = null,
 )
 
