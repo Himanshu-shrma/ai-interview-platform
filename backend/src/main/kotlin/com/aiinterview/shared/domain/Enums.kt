@@ -16,3 +16,10 @@ enum class SubmissionStatus {
     PENDING, RUNNING, ACCEPTED, WRONG_ANSWER,
     TIME_LIMIT, RUNTIME_ERROR, COMPILE_ERROR
 }
+
+/**
+ * Canonical interview category used for question routing and generation.
+ * Separate from InterviewType (which maps to the V3 Postgres enum).
+ * CASE_STUDY has no matching Postgres enum value and maps to type=CODING in the DB.
+ */
+enum class InterviewCategory { CODING, DSA, BEHAVIORAL, SYSTEM_DESIGN, CASE_STUDY }
