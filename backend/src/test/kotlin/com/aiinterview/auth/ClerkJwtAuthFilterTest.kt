@@ -86,17 +86,20 @@ class ClerkJwtAuthFilterTest {
     @TestConfiguration
     class TestJwksCacheConfig {
         /**
-         * Override JwksCache so it returns our test RSA key set
-         * instead of calling the real Clerk JWKS URL.
+         * Override JwksValidator so it validates tokens against our test RSA key
+         * instead of fetching from the real Clerk JWKS URL.
          */
         @Bean
         @Primary
-        fun testJwksCache(
+        fun testJwksValidator(
             @Value("\${clerk.jwks-url}") url: String,
             @Value("\${clerk.jwks-cache-ttl-minutes:60}") cacheTtlMinutes: Long,
             webClientBuilder: WebClient.Builder,
-        ): JwksCache = object : JwksCache(url, cacheTtlMinutes, webClientBuilder) {
-            override suspend fun getJwkSet(): JWKSet = JWKSet(TEST_RSA_KEY.toPublicJWK())
+        ): JwksValidator {
+            val fakeCache = object : JwksCache(url, cacheTtlMinutes, webClientBuilder) {
+                override suspend fun getJwkSet(): JWKSet = JWKSet(TEST_RSA_KEY.toPublicJWK())
+            }
+            return JwksValidator(fakeCache)
         }
 
         /**
