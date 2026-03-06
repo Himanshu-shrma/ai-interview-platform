@@ -48,6 +48,7 @@ data class TestResult(
     JsonSubTypes.Type(value = OutboundMessage.HintResponse::class,      name = "HINT_RESPONSE"),
     JsonSubTypes.Type(value = OutboundMessage.HintDelivered::class,     name = "HINT_DELIVERED"),
     JsonSubTypes.Type(value = OutboundMessage.InterviewEnded::class,    name = "INTERVIEW_ENDED"),
+    JsonSubTypes.Type(value = OutboundMessage.SessionEnd::class,        name = "SESSION_END"),
     JsonSubTypes.Type(value = OutboundMessage.Error::class,             name = "ERROR"),
     JsonSubTypes.Type(value = OutboundMessage.Pong::class,              name = "PONG"),
 )
@@ -69,6 +70,8 @@ sealed class OutboundMessage {
     data class HintResponse(val hint: String, val hintsGiven: Int) : OutboundMessage()
     data class HintDelivered(val hint: String, val level: Int, val hintsRemaining: Int, val refused: Boolean = false) : OutboundMessage()
     data class InterviewEnded(val reason: String, val overallScore: Double) : OutboundMessage()
+    /** Sent when evaluation report is ready — carries reportId for redirect. */
+    data class SessionEnd(val reportId: UUID) : OutboundMessage()
     data class Error(val code: String, val message: String) : OutboundMessage()
     class Pong : OutboundMessage()
 }

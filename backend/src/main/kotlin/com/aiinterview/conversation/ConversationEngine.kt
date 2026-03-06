@@ -5,6 +5,7 @@ import com.aiinterview.interview.repository.ConversationMessageRepository
 import com.aiinterview.interview.service.RedisMemoryService
 import com.aiinterview.interview.ws.OutboundMessage
 import com.aiinterview.interview.ws.WsSessionRegistry
+import com.aiinterview.report.service.ReportService
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -28,6 +29,8 @@ import java.util.UUID
  * [agentOrchestrator] uses @Lazy to break the circular dependency:
  *   ConversationEngine → AgentOrchestrator → InterviewerAgent ✓
  *   AgentOrchestrator does NOT inject ConversationEngine ✓
+ *
+ * [reportService] uses @Lazy as a safety guard against Spring init ordering issues.
  */
 @Service
 class ConversationEngine(
@@ -36,10 +39,11 @@ class ConversationEngine(
     private val registry: WsSessionRegistry,
     private val conversationMessageRepository: ConversationMessageRepository,
     @Lazy private val agentOrchestrator: AgentOrchestrator,
+    @Lazy private val reportService: ReportService,
 ) {
     private val log = LoggerFactory.getLogger(ConversationEngine::class.java)
 
-    /** Background scope for fire-and-forget agent tasks (analysis, hint generation). */
+    /** Background scope for fire-and-forget agent tasks (analysis, hint generation, reports). */
     private val backgroundScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     // ── Public API ────────────────────────────────────────────────────────────
@@ -91,7 +95,6 @@ class ConversationEngine(
      * Flow:
      * 1. Transition → QuestionPresented
      * 2. Build and stream the opening interviewer message
-     * 3. Append AI opening to transcript
      */
     suspend fun startInterview(sessionId: UUID) {
         val memory = try {
@@ -119,6 +122,20 @@ class ConversationEngine(
         interviewerAgent.streamResponse(sessionId, updatedMemory, openingMessage)
 
         log.info("Interview started: sessionId={}", sessionId)
+    }
+
+    /**
+     * Forces the interview to end (e.g., timer expiry or explicit end).
+     * Transitions to [InterviewState.Evaluating] then fires report generation.
+     */
+    suspend fun forceEndInterview(sessionId: UUID) {
+        transition(sessionId, InterviewState.Evaluating)
+        val handler = CoroutineExceptionHandler { _, e ->
+            log.error("Report generation failed for force-ended session {}", sessionId, e)
+        }
+        backgroundScope.launch(handler) {
+            reportService.generateAndSaveReport(sessionId)
+        }
     }
 
     /**

@@ -25,5 +25,9 @@ data class EvaluationReport(
     /** JSONB — list of suggestion strings */
     val suggestions: String? = null,
     val narrativeSummary: String? = null,
+    /** JSONB — map of dimensionName → one-sentence feedback string */
+    val dimensionFeedback: String? = null,
+    val hintsUsed: Int = 0,
+    val completedAt: OffsetDateTime? = null,
     val createdAt: OffsetDateTime? = null,
 )

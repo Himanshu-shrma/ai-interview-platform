@@ -10,6 +10,7 @@ import com.aiinterview.interview.service.InterviewMemory
 import com.aiinterview.interview.service.RedisMemoryService
 import com.aiinterview.interview.ws.OutboundMessage
 import com.aiinterview.interview.ws.WsSessionRegistry
+import com.aiinterview.report.service.ReportService
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
@@ -27,6 +28,7 @@ class ConversationEngineTest {
     private val registry           = mockk<WsSessionRegistry>(relaxed = true)
     private val messageRepository  = mockk<ConversationMessageRepository>()
     private val agentOrchestrator  = mockk<AgentOrchestrator>(relaxed = true)
+    private val reportService       = mockk<ReportService>(relaxed = true)
 
     private val engine = ConversationEngine(
         redisMemoryService            = redisMemoryService,
@@ -34,6 +36,7 @@ class ConversationEngineTest {
         registry                      = registry,
         conversationMessageRepository = messageRepository,
         agentOrchestrator             = agentOrchestrator,
+        reportService                 = reportService,
     )
 
     private val sessionId = UUID.randomUUID()

@@ -30,20 +30,27 @@ class UsageLimitService(
     fun usageKey(userId: UUID): String = "usage:$userId:interviews:${YearMonth.now()}"
 
     /**
-     * Returns true if the user is allowed to start another interview,
-     * then atomically increments the counter.
-     * Returns false (without incrementing) if the FREE limit is reached.
+     * Returns true if the user is allowed to start another interview.
+     * Does NOT increment — usage is only incremented when a report is saved
+     * via [incrementUsage], so abandoned sessions do not consume quota.
+     * Returns false (no side effects) when the FREE tier limit is reached.
      */
     suspend fun checkAndIncrementUsage(userId: UUID, plan: String): Boolean {
         if (plan.uppercase() == "PRO") return true
+        val current = redisTemplate.opsForValue().get(usageKey(userId)).awaitSingleOrNull()?.toIntOrNull() ?: 0
+        return current < freeTierLimit
+    }
 
-        val key = usageKey(userId)
-        val current = redisTemplate.opsForValue().get(key).awaitSingleOrNull()?.toIntOrNull() ?: 0
-        if (current >= freeTierLimit) return false
-
-        redisTemplate.opsForValue().increment(key).awaitSingle()
-        redisTemplate.expire(key, KEY_TTL).awaitSingleOrNull()
-        return true
+    /**
+     * Atomically increments the monthly usage counter after a completed interview.
+     * Sets a 35-day TTL on first use so the key auto-expires after the month.
+     */
+    suspend fun incrementUsage(userId: UUID) {
+        val key   = usageKey(userId)
+        val count = redisTemplate.opsForValue().increment(key).awaitSingle()
+        if (count == 1L) {
+            redisTemplate.expire(key, KEY_TTL).awaitSingleOrNull()
+        }
     }
 
     /** Returns the number of interviews used this month (0 if none). */
