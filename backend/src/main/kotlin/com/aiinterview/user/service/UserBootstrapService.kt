@@ -80,7 +80,7 @@ class UserBootstrapService(
 
             userRepository.save(
                 User(
-                    orgId = org.id!!,
+                    orgId = requireNotNull(org.id) { "Organization save returned null id" },
                     clerkUserId = clerkUserId,
                     email = email,
                     fullName = fullName,

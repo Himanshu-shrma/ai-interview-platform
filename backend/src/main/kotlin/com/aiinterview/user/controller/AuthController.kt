@@ -23,14 +23,16 @@ class AuthController(
         val user = authentication.principal as? User
             ?: return ResponseEntity.status(401).build()
 
+        val userId = user.id ?: return ResponseEntity.status(401).build()
+
         val org = organizationRepository.findById(user.orgId).awaitSingleOrNull()
             ?: return ResponseEntity.notFound().build()
 
-        val usedThisMonth = usageLimitService.getUsageThisMonth(user.id!!)
+        val usedThisMonth = usageLimitService.getUsageThisMonth(userId)
 
         return ResponseEntity.ok(
             UserDto(
-                id = user.id!!,
+                id = userId,
                 email = user.email,
                 fullName = user.fullName,
                 role = user.role,

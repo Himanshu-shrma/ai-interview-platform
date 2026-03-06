@@ -93,8 +93,9 @@ class ClerkJwtAuthFilterTest {
         @Primary
         fun testJwksCache(
             @Value("\${clerk.jwks-url}") url: String,
+            @Value("\${clerk.jwks-cache-ttl-minutes:60}") cacheTtlMinutes: Long,
             webClientBuilder: WebClient.Builder,
-        ): JwksCache = object : JwksCache(url, webClientBuilder) {
+        ): JwksCache = object : JwksCache(url, cacheTtlMinutes, webClientBuilder) {
             override suspend fun getJwkSet(): JWKSet = JWKSet(TEST_RSA_KEY.toPublicJWK())
         }
 

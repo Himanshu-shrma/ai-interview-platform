@@ -2,6 +2,7 @@ package com.aiinterview.user.service
 
 import kotlinx.coroutines.reactor.awaitSingle
 import kotlinx.coroutines.reactor.awaitSingleOrNull
+import org.springframework.beans.factory.annotation.Value
 import org.springframework.data.redis.core.ReactiveStringRedisTemplate
 import org.springframework.stereotype.Service
 import java.time.Duration
@@ -14,15 +15,15 @@ import java.util.UUID
  * Key: usage:{userId}:interviews:{YYYY-MM}
  * TTL: 35 days (covers the full current month + buffer)
  *
- * FREE plan limit: 3 interviews/month.
+ * FREE plan limit: configured via interview.free-tier-limit (default: 3).
  * PRO plan: unlimited.
  */
 @Service
 class UsageLimitService(
     private val redisTemplate: ReactiveStringRedisTemplate,
+    @Value("\${interview.free-tier-limit:3}") private val freeTierLimit: Int,
 ) {
     companion object {
-        private const val FREE_LIMIT = 3
         private val KEY_TTL = Duration.ofDays(35)
     }
 
@@ -38,7 +39,7 @@ class UsageLimitService(
 
         val key = usageKey(userId)
         val current = redisTemplate.opsForValue().get(key).awaitSingleOrNull()?.toIntOrNull() ?: 0
-        if (current >= FREE_LIMIT) return false
+        if (current >= freeTierLimit) return false
 
         redisTemplate.opsForValue().increment(key).awaitSingle()
         redisTemplate.expire(key, KEY_TTL).awaitSingleOrNull()

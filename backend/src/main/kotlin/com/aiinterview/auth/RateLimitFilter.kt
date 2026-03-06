@@ -4,6 +4,7 @@ import com.aiinterview.user.model.User
 import kotlinx.coroutines.reactor.awaitSingle
 import kotlinx.coroutines.reactor.awaitSingleOrNull
 import kotlinx.coroutines.reactor.mono
+import org.springframework.beans.factory.annotation.Value
 import org.springframework.core.annotation.Order
 import org.springframework.data.redis.core.ReactiveStringRedisTemplate
 import org.springframework.http.HttpStatus
@@ -16,18 +17,14 @@ import org.springframework.web.server.WebFilterChain
 import reactor.core.publisher.Mono
 import java.time.Duration
 
-// Rate limit: 60 req/min per authenticated user.
-// Redis key: ratelimit:{userId}:{epochMinute} — TTL 60s.
+// Rate limit per authenticated user. Redis key: ratelimit:{userId}:{epochMinute}
 // Skips /health and /actuator paths.
 @Component
 @Order(-150)
 class RateLimitFilter(
     private val redisTemplate: ReactiveStringRedisTemplate,
+    @Value("\${rate-limit.requests-per-minute:60}") private val maxPerMinute: Int,
 ) : WebFilter {
-
-    companion object {
-        private const val MAX_PER_MINUTE = 60
-    }
 
     override fun filter(exchange: ServerWebExchange, chain: WebFilterChain): Mono<Void> {
         val path = exchange.request.uri.path
@@ -58,14 +55,14 @@ class RateLimitFilter(
         if (count == 1L) {
             redisTemplate.expire(key, Duration.ofSeconds(60)).awaitSingleOrNull()
         }
-        return if (count > MAX_PER_MINUTE) tooManyRequests(exchange) else chain.filter(exchange)
+        return if (count > maxPerMinute) tooManyRequests(exchange) else chain.filter(exchange)
     }
 
     private fun tooManyRequests(exchange: ServerWebExchange): Mono<Void> {
         val response = exchange.response
         response.statusCode = HttpStatus.TOO_MANY_REQUESTS
         response.headers.contentType = MediaType.APPLICATION_JSON
-        response.headers["Retry-After"] = "60"
+        response.headers["Retry-After"] = "60" // 1 minute window — aligns with ratelimit key TTL
         val body = """{"error":"Too Many Requests","message":"Rate limit exceeded"}"""
         val buffer = response.bufferFactory().wrap(body.toByteArray())
         return response.writeWith(Mono.just(buffer))
