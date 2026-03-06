@@ -145,6 +145,14 @@
             <scope>test</scope>
         </dependency>
 
+        <!-- MockK — Kotlin-idiomatic mocking (coroutine-aware) -->
+        <dependency>
+            <groupId>io.mockk</groupId>
+            <artifactId>mockk-jvm</artifactId>
+            <version>1.13.12</version>
+            <scope>test</scope>
+        </dependency>
+
     </dependencies>
 
     <!-- ─── Build ───────────────────────────────────────────────────────── -->
