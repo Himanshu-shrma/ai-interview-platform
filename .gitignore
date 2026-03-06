@@ -3,13 +3,10 @@
 .env.local
 .env.*.local
 
-# ── Kotlin / Gradle ───────────────────────────────────────────────────────────
-backend/.gradle/
-backend/build/
-backend/out/
+# ── Kotlin / Maven ────────────────────────────────────────────────────────────
+backend/target/
 *.class
 *.jar
-!gradle-wrapper.jar
 
 # ── Node / Frontend ───────────────────────────────────────────────────────────
 frontend/node_modules/

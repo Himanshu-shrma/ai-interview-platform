@@ -1,0 +1,69 @@
+spring:
+  application:
+    name: ai-interview-backend
+
+  # ── R2DBC (async PostgreSQL for the app) ────────────────────────────────
+  r2dbc:
+    url: ${DATABASE_URL:r2dbc:postgresql://localhost:5432/aiinterview}
+    username: ${POSTGRES_USER:aiinterview}
+    password: ${POSTGRES_PASSWORD:changeme}
+    pool:
+      enabled: true
+      initial-size: 5
+      max-size: 20
+
+  # ── Flyway (migrations via JDBC — Flyway does not support R2DBC) ─────────
+  # Spring Boot will auto-configure Flyway using these JDBC credentials
+  # while the app itself uses R2DBC for all runtime DB access.
+  flyway:
+    url: ${FLYWAY_URL:jdbc:postgresql://localhost:5432/aiinterview}
+    user: ${POSTGRES_USER:aiinterview}
+    password: ${POSTGRES_PASSWORD:changeme}
+    locations: classpath:db/migration
+    baseline-on-migrate: true
+
+  # ── Redis ────────────────────────────────────────────────────────────────
+  data:
+    redis:
+      url: ${REDIS_URL:redis://localhost:6379}
+
+  # ── Security (permit /health and /ws/** without auth) ───────────────────
+  security:
+    user:
+      name: admin
+      password: disabled  # real auth handled by ClerkJwtAuthFilter
+
+server:
+  port: 8080
+
+# ── Actuator health endpoint ────────────────────────────────────────────────
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      show-details: always
+
+# ── Clerk JWT validation ─────────────────────────────────────────────────────
+clerk:
+  jwks-url: ${CLERK_JWKS_URL:https://your-clerk-instance.clerk.accounts.dev/.well-known/jwks.json}
+  publishable-key: ${CLERK_PUBLISHABLE_KEY:}
+
+# ── OpenAI ──────────────────────────────────────────────────────────────────
+openai:
+  api-key: ${OPENAI_API_KEY:}
+
+# ── Judge0 ──────────────────────────────────────────────────────────────────
+judge0:
+  base-url: ${JUDGE0_BASE_URL:http://localhost:2358}
+  auth-token: ${JUDGE0_AUTH_TOKEN:judge0_dev_token_replace_in_production}
+  auth-header: ${JUDGE0_AUTH_HEADER:X-Auth-Token}
+
+# ── Logging ─────────────────────────────────────────────────────────────────
+logging:
+  level:
+    com.aiinterview: DEBUG
+    org.springframework.security: INFO
+    org.springframework.r2dbc: INFO

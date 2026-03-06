@@ -21,6 +21,7 @@ A full-stack AI-powered mock interview platform. Candidates take real-feeling te
 
 - Docker Desktop (running)
 - Java 21
+- Maven 3.8+ (`mvn --version` to check)
 - Node 20
 - OpenAI API key
 - Clerk.dev account (free tier)
@@ -57,9 +58,9 @@ docker-compose ps
 
 ```bash
 cd backend
-./gradlew bootRun
+mvn spring-boot:run
 # Starts on http://localhost:8080
-# Health check: http://localhost:8080/health
+# Health check: http://localhost:8080/actuator/health
 ```
 
 ### 4. Start Frontend
@@ -74,10 +75,11 @@ npm run dev
 ## Key Commands
 
 ```bash
-# Backend
-cd backend && ./gradlew bootRun          # Start dev server
-cd backend && ./gradlew test             # Run tests
-cd backend && ./gradlew build            # Build JAR
+# Backend (Maven)
+cd backend && mvn spring-boot:run        # Start dev server
+cd backend && mvn test                   # Run tests
+cd backend && mvn package                # Build JAR (-DskipTests to skip)
+cd backend && mvn compile                # Compile only (fast check)
 
 # Frontend
 cd frontend && npm run dev               # Start Vite dev server
