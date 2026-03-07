@@ -11,6 +11,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.reactor.awaitSingle
 import kotlinx.coroutines.withContext
 import org.slf4j.LoggerFactory
 import org.springframework.context.annotation.Lazy
@@ -163,7 +164,7 @@ class ConversationEngine(
             withContext(Dispatchers.IO) {
                 conversationMessageRepository.save(
                     ConversationMessage(sessionId = sessionId, role = "CANDIDATE", content = content)
-                ).block()
+                ).awaitSingle()
             }
         } catch (e: Exception) {
             log.warn("Failed to persist candidate message to DB for session {}: {}", sessionId, e.message)

@@ -142,7 +142,7 @@ class InterviewWebSocketHandlerTest {
     // ── END_INTERVIEW ────────────────────────────────────────────────────────
 
     @Test
-    fun `END_INTERVIEW sends INTERVIEW_ENDED response`() {
+    fun `END_INTERVIEW triggers forceEndInterview on conversation engine`() {
         coEvery { memoryService.memoryExists(sessionId) } returns false
         coEvery { registry.sendMessage(sessionId, any()) } returns true
 
@@ -150,11 +150,7 @@ class InterviewWebSocketHandlerTest {
         inboundSink.tryEmitComplete()
         handler.handle(wsSession).block()
 
-        coVerify {
-            registry.sendMessage(sessionId, match {
-                it is OutboundMessage.InterviewEnded && it.reason == "CANDIDATE_ENDED"
-            })
-        }
+        coVerify { conversationEngine.forceEndInterview(sessionId) }
     }
 
     // ── invalid message ──────────────────────────────────────────────────────

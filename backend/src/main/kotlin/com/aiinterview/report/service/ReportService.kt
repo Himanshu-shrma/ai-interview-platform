@@ -262,7 +262,7 @@ class ReportService(
 
         val sessionScores = reports.mapNotNull { report ->
             val session = sessionMap[report.sessionId] ?: return@mapNotNull null
-            val config  = session.config?.let { parseConfig(it) } ?: return@mapNotNull null
+            val config  = parseConfig(session.config) ?: return@mapNotNull null
             val score   = report.overallScore?.toDouble() ?: return@mapNotNull null
             SessionScore(config.category.name, config.difficulty.name, score)
         }

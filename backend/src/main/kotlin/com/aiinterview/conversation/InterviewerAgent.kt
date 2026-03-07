@@ -14,6 +14,7 @@ import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.reactor.awaitSingle
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import org.slf4j.LoggerFactory
@@ -157,7 +158,7 @@ class InterviewerAgent(
             withContext(Dispatchers.IO) {
                 conversationMessageRepository.save(
                     ConversationMessage(sessionId = sessionId, role = "AI", content = responseText)
-                ).block()
+                ).awaitSingle()
             }
         } catch (e: Exception) {
             log.warn("Failed to persist AI message to DB for session {}: {}", sessionId, e.message)

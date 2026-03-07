@@ -136,13 +136,9 @@ class InterviewWebSocketHandler(
 
             "END_INTERVIEW" -> {
                 val msg = objectMapper.treeToValue(tree, InboundMessage.EndInterview::class.java)
-                // TODO (Prompt 11): trigger evaluation pipeline
                 log.info("END_INTERVIEW from {}: reason={}", sessionId, msg.reason)
-                conversationEngine.transition(sessionId, InterviewState.InterviewEnd)
-                registry.sendMessage(
-                    sessionId,
-                    OutboundMessage.InterviewEnded(reason = msg.reason, overallScore = 0.0)
-                )
+                // Transitions to Evaluating → fires report generation → sends SESSION_END via WS
+                conversationEngine.forceEndInterview(sessionId)
             }
 
             else -> {
