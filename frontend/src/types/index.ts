@@ -14,45 +14,49 @@ export interface User {
 export type InterviewCategory = 'CODING' | 'DSA' | 'BEHAVIORAL' | 'SYSTEM_DESIGN' | 'CASE_STUDY'
 export type InterviewType = 'DSA' | 'CODING' | 'SYSTEM_DESIGN' | 'BEHAVIORAL'
 export type Difficulty = 'EASY' | 'MEDIUM' | 'HARD'
-export type SessionStatus = 'CREATED' | 'IN_PROGRESS' | 'EVALUATING' | 'COMPLETED' | 'ABANDONED'
+export type SessionStatus = 'PENDING' | 'ACTIVE' | 'COMPLETED' | 'ABANDONED' | 'EXPIRED'
 
 export interface InterviewConfig {
   category: InterviewCategory
+  type?: InterviewType
   difficulty: Difficulty
-  language: string
-  questionCount: number
+  personality: string
+  programmingLanguage?: string
+  targetRole?: string
+  targetCompany?: string
+  durationMinutes: number
 }
 
 export interface CandidateQuestion {
   id: string
   title: string
   description: string
-  examples: string[]
-  constraints: string[]
-  difficulty: Difficulty
-  category: InterviewCategory
-  starterCode?: string
+  category: string
+  difficulty: string
+  topicTags?: string[]
+  examples?: unknown
+  constraintsText?: string
+  slug?: string
+  timeComplexity?: string
+  spaceComplexity?: string
+  createdAt?: string
 }
 
 export interface InterviewSession {
   id: string
   userId: string
   status: SessionStatus
-  config: InterviewConfig
-  currentQuestionIndex: number
-  totalQuestions: number
-  createdAt: string
-  completedAt?: string
+  type: string
+  config: string
+  startedAt?: string
+  endedAt?: string
+  durationSecs?: number
+  createdAt?: string
 }
 
 // ── Session API DTOs ──
 
-export interface StartSessionRequest {
-  category: InterviewCategory
-  difficulty: Difficulty
-  language: string
-  questionCount: number
-}
+export type StartSessionRequest = InterviewConfig
 
 export interface StartSessionResponse {
   sessionId: string
@@ -61,46 +65,95 @@ export interface StartSessionResponse {
 
 export interface SessionSummaryDto {
   id: string
-  category: InterviewCategory
-  difficulty: Difficulty
   status: SessionStatus
-  questionCount: number
-  createdAt: string
-  completedAt?: string
+  type: string
+  category: string
+  difficulty: string
+  createdAt?: string
+  endedAt?: string
+  durationSecs?: number
   overallScore?: number
 }
 
 export interface SessionDetailDto {
   id: string
-  category: InterviewCategory
-  difficulty: Difficulty
-  language: string
   status: SessionStatus
-  currentQuestionIndex: number
-  totalQuestions: number
-  createdAt: string
-  completedAt?: string
+  type: string
+  category: string
+  difficulty: string
+  personality: string
+  programmingLanguage?: string
+  targetRole?: string
+  targetCompany?: string
+  durationMinutes: number
+  createdAt?: string
+  startedAt?: string
+  endedAt?: string
+  durationSecs?: number
+  questions: CandidateQuestion[]
+  overallScore?: number
 }
 
 // ── Evaluation Report ──
 
-export interface DimensionFeedback {
-  dimension: string
-  score: number
-  maxScore: number
-  feedback: string
+export interface ScoresDto {
+  problemSolving: number
+  algorithmChoice: number
+  codeQuality: number
+  communication: number
+  efficiency: number
+  testing: number
+  overall: number
 }
 
-export interface EvaluationReport {
-  id: string
+export interface ReportDto {
+  reportId: string
   sessionId: string
   overallScore: number
-  summary: string
-  dimensionFeedback: DimensionFeedback[]
+  scores: ScoresDto
   strengths: string[]
-  improvements: string[]
+  weaknesses: string[]
+  suggestions: string[]
+  narrativeSummary: string
+  dimensionFeedback: Record<string, string>
   hintsUsed: number
+  category: string
+  difficulty: string
+  questionTitle: string
+  programmingLanguage?: string
+  durationSeconds?: number
   completedAt: string
+}
+
+export interface ReportSummaryDto {
+  reportId: string
+  sessionId: string
+  overallScore: number
+  category: string
+  difficulty: string
+  completedAt: string
+}
+
+// ── Stats ──
+
+export interface UserStatsDto {
+  totalInterviews: number
+  completedInterviews: number
+  averageScore: number
+  bestScore: number
+  interviewsThisMonth: number
+  freeInterviewsRemaining: number
+  scoreByCategory: Record<string, number>
+  scoreByDifficulty: Record<string, number>
+}
+
+// ── Pagination ──
+
+export interface PagedResponse<T> {
+  content: T[]
+  page: number
+  size: number
+  total: number
 }
 
 // ── WebSocket Messages ──
@@ -179,23 +232,4 @@ export interface TestResult {
   time: string
   memory: number
   stderr?: string
-}
-
-// ── Stats ──
-
-export interface UserStats {
-  totalInterviews: number
-  completedInterviews: number
-  averageScore: number
-  interviewsByCategory: Record<InterviewCategory, number>
-}
-
-// ── Pagination ──
-
-export interface PaginatedResponse<T> {
-  content: T[]
-  page: number
-  size: number
-  totalElements: number
-  totalPages: number
 }

@@ -4,9 +4,10 @@ import type {
   StartSessionResponse,
   SessionSummaryDto,
   SessionDetailDto,
-  EvaluationReport,
-  UserStats,
-  PaginatedResponse,
+  ReportDto,
+  ReportSummaryDto,
+  UserStatsDto,
+  PagedResponse,
   User,
 } from '@/types'
 
@@ -35,60 +36,65 @@ api.interceptors.request.use(async (config) => {
 // ── User ──
 
 export async function getMe(): Promise<User> {
-  const { data } = await api.get<User>('/api/users/me')
+  const { data } = await api.get<User>('/api/v1/users/me')
   return data
 }
 
-export async function getStats(): Promise<UserStats> {
-  const { data } = await api.get<UserStats>('/api/users/me/stats')
+export async function getStats(): Promise<UserStatsDto> {
+  const { data } = await api.get<UserStatsDto>('/api/v1/users/me/stats')
   return data
 }
 
 // ── Languages ──
 
+export interface LanguagesResponse {
+  languages: string[]
+}
+
 export async function getLanguages(): Promise<string[]> {
-  const { data } = await api.get<string[]>('/api/languages')
-  return data
+  const { data } = await api.get<LanguagesResponse>('/api/v1/code/languages')
+  return data.languages
 }
 
 // ── Sessions ──
 
 export async function startSession(req: StartSessionRequest): Promise<StartSessionResponse> {
-  const { data } = await api.post<StartSessionResponse>('/api/sessions', req)
+  const { data } = await api.post<StartSessionResponse>('/api/v1/interviews/sessions', req)
   return data
 }
 
 export async function endSession(sessionId: string): Promise<void> {
-  await api.post(`/api/sessions/${sessionId}/end`)
+  await api.post(`/api/v1/interviews/sessions/${sessionId}/end`)
 }
 
 export async function getSession(sessionId: string): Promise<SessionDetailDto> {
-  const { data } = await api.get<SessionDetailDto>(`/api/sessions/${sessionId}`)
+  const { data } = await api.get<SessionDetailDto>(`/api/v1/interviews/sessions/${sessionId}`)
   return data
 }
 
 export async function listSessions(
   page = 0,
-  size = 10
-): Promise<PaginatedResponse<SessionSummaryDto>> {
-  const { data } = await api.get<PaginatedResponse<SessionSummaryDto>>('/api/sessions', {
-    params: { page, size },
-  })
+  size = 20
+): Promise<PagedResponse<SessionSummaryDto>> {
+  const { data } = await api.get<PagedResponse<SessionSummaryDto>>(
+    '/api/v1/interviews/sessions',
+    { params: { page, size } }
+  )
   return data
 }
 
 // ── Reports ──
 
-export async function getReport(sessionId: string): Promise<EvaluationReport> {
-  const { data } = await api.get<EvaluationReport>(`/api/reports/${sessionId}`)
+export async function getReport(sessionId: string): Promise<ReportDto> {
+  const { data } = await api.get<ReportDto>(`/api/v1/reports/${sessionId}`)
   return data
 }
 
 export async function listReports(
   page = 0,
   size = 10
-): Promise<PaginatedResponse<EvaluationReport>> {
-  const { data } = await api.get<PaginatedResponse<EvaluationReport>>('/api/reports', {
+): Promise<ReportSummaryDto[]> {
+  const { data } = await api.get<ReportSummaryDto[]>('/api/v1/reports', {
     params: { page, size },
   })
   return data
