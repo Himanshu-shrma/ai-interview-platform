@@ -4,13 +4,10 @@ import com.aiinterview.interview.service.InterviewMemory
 import com.aiinterview.interview.service.RedisMemoryService
 import com.aiinterview.interview.ws.OutboundMessage
 import com.aiinterview.interview.ws.WsSessionRegistry
-import com.openai.client.OpenAIClient
-import com.openai.models.ChatModel
-import com.openai.models.chat.completions.ChatCompletionCreateParams
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
+import com.aiinterview.shared.ai.LlmProviderRegistry
+import com.aiinterview.shared.ai.LlmRequest
+import com.aiinterview.shared.ai.ModelConfig
 import org.slf4j.LoggerFactory
-import org.springframework.beans.factory.annotation.Value
 import org.springframework.stereotype.Component
 
 private const val MAX_HINTS = 3
@@ -22,30 +19,23 @@ data class HintResult(
     val refused: Boolean = false,
 )
 
-/**
- * Background agent that delivers progressive hints (3 levels) on demand.
- * Sends [OutboundMessage.HintDelivered] to the candidate's WS session.
- * Deducts from [evalScores.problemSolving] for each hint used.
- */
 @Component
 class HintGenerator(
-    private val openAIClient: OpenAIClient,
+    private val llm: LlmProviderRegistry,
+    private val modelConfig: ModelConfig,
     private val redisMemoryService: RedisMemoryService,
     private val registry: WsSessionRegistry,
-    @Value("\${openai.model.background:gpt-4o-mini}") private val model: String,
 ) {
     private val log = LoggerFactory.getLogger(HintGenerator::class.java)
 
     companion object {
-        // STATIC part first for prompt caching
         const val SYSTEM_PROMPT =
             "You are a technical interviewer providing a hint. " +
-            "The hint must be at the appropriate level: " +
-            "Level 1 is abstract (point toward a concept), " +
-            "Level 2 names a data structure, " +
-            "Level 3 describes the approach without giving code."
+                "The hint must be at the appropriate level: " +
+                "Level 1 is abstract (point toward a concept), " +
+                "Level 2 names a data structure, " +
+                "Level 3 describes the approach without giving code."
 
-        /** Score deduction per hint level. */
         private val DEDUCTIONS = mapOf(1 to 0.5, 2 to 1.0, 3 to 1.5)
     }
 
@@ -54,22 +44,22 @@ class HintGenerator(
             registry.sendMessage(
                 memory.sessionId,
                 OutboundMessage.HintDelivered(
-                    hint           = "You've used all available hints for this question.",
-                    level          = 0,
+                    hint = "You've used all available hints for this question.",
+                    level = 0,
                     hintsRemaining = 0,
-                    refused        = true,
+                    refused = true,
                 ),
             )
             log.debug("Hint refused for session {} — limit reached", memory.sessionId)
             return HintResult(hint = "", level = 0, hintsRemaining = 0, refused = true)
         }
 
-        val level      = memory.hintsGiven + 1
+        val level = memory.hintsGiven + 1
         val userPrompt = buildUserPrompt(memory, level)
-        val hint       = callLlm(userPrompt) ?: "Think carefully about the problem constraints."
+        val hint = callLlm(userPrompt) ?: "Think carefully about the problem constraints."
 
         val deduction = DEDUCTIONS[level] ?: 0.0
-        val updated   = redisMemoryService.updateMemory(memory.sessionId) { mem ->
+        val updated = redisMemoryService.updateMemory(memory.sessionId) { mem ->
             mem.copy(
                 hintsGiven = mem.hintsGiven + 1,
                 evalScores = mem.evalScores.copy(
@@ -87,19 +77,16 @@ class HintGenerator(
         return HintResult(hint, level, hintsRemaining)
     }
 
-    // ── Private helpers ───────────────────────────────────────────────────────
-
     private suspend fun callLlm(userPrompt: String): String? = try {
-        withContext(Dispatchers.IO) {
-            val params = ChatCompletionCreateParams.builder()
-                .model(ChatModel.of(model))
-                .addSystemMessage(SYSTEM_PROMPT)
-                .addUserMessage(userPrompt)
-                .maxCompletionTokens(150)
-                .build()
-            openAIClient.chat().completions().create(params)
-                .choices().firstOrNull()?.message()?.content()?.orElse(null)
-        }
+        val response = llm.complete(
+            LlmRequest.build(
+                systemPrompt = SYSTEM_PROMPT,
+                userMessage = userPrompt,
+                model = modelConfig.backgroundModel,
+                maxTokens = 150,
+            ),
+        )
+        response.content
     } catch (e: Exception) {
         log.error("LLM call failed in HintGenerator: {}", e.message)
         null

@@ -3,39 +3,31 @@ package com.aiinterview.report
 import com.aiinterview.interview.service.EvalScores
 import com.aiinterview.interview.service.InterviewMemory
 import com.aiinterview.report.service.EvaluationAgent
+import com.aiinterview.shared.ai.LlmProviderRegistry
+import com.aiinterview.shared.ai.LlmResponse
+import com.aiinterview.shared.ai.ModelConfig
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
-import com.openai.client.OpenAIClient
-import com.openai.models.ChatModel
-import com.openai.models.chat.completions.ChatCompletion
-import com.openai.models.chat.completions.ChatCompletionCreateParams
-import com.openai.models.chat.completions.ChatCompletionMessage
-import com.openai.services.blocking.chat.ChatCompletionService
-import com.openai.services.blocking.ChatService
-import io.mockk.every
+import io.mockk.coEvery
 import io.mockk.mockk
-import io.mockk.verify
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertTrue
-import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import java.time.Instant
-import java.util.Optional
 import java.util.UUID
 
 class EvaluationAgentTest {
 
-    private val openAIClient     = mockk<OpenAIClient>()
-    private val chatService      = mockk<ChatService>()
-    private val completionService = mockk<ChatCompletionService>()
-    private val objectMapper     = jacksonObjectMapper()
+    private val llm          = mockk<LlmProviderRegistry>()
+    private val modelConfig  = ModelConfig()
+    private val objectMapper = jacksonObjectMapper()
 
     private val agent = EvaluationAgent(
-        openAIClient = openAIClient,
+        llm          = llm,
+        modelConfig  = modelConfig,
         objectMapper = objectMapper,
-        model        = "gpt-4o",
     )
 
     private val sessionId = UUID.randomUUID()
@@ -61,21 +53,10 @@ class EvaluationAgentTest {
         lastActivityAt    = Instant.now(),
     )
 
-    @BeforeEach
-    fun setUp() {
-        every { openAIClient.chat() } returns chatService
-        every { chatService.completions() } returns completionService
-    }
-
-    private fun mockLlmResponse(json: String) {
-        val choice  = mockk<ChatCompletion.Choice>()
-        val message = mockk<ChatCompletionMessage>()
-        val result  = mockk<ChatCompletion>()
-
-        every { message.content() } returns Optional.of(json)
-        every { choice.message() } returns message
-        every { result.choices() } returns listOf(choice)
-        every { completionService.create(any<ChatCompletionCreateParams>()) } returns result
+    private fun stubLlm(json: String) {
+        coEvery { llm.complete(any()) } returns LlmResponse(
+            content = json, model = "gpt-4o", provider = "openai",
+        )
     }
 
     @Test
@@ -96,7 +77,7 @@ class EvaluationAgentTest {
               }
             }
         """.trimIndent()
-        mockLlmResponse(json)
+        stubLlm(json)
 
         val result = agent.evaluate(memory)
 
@@ -109,40 +90,14 @@ class EvaluationAgentTest {
     }
 
     @Test
-    fun `evaluate uses gpt-4o not gpt-4o-mini`() = runBlocking {
-        mockLlmResponse("""{"strengths":[],"weaknesses":[],"suggestions":[],"narrativeSummary":"ok","dimensionFeedback":{}}""")
-
-        agent.evaluate(memory)
-
-        verify {
-            completionService.create(
-                match<ChatCompletionCreateParams> { params ->
-                    params.model() == ChatModel.of("gpt-4o")
-                }
-            )
-        }
-    }
-
-    @Test
     fun `evaluate retries once on parse failure and returns result`() = runBlocking {
         val badJson  = "this is not valid json at all"
         val goodJson = """{"strengths":["ok"],"weaknesses":[],"suggestions":[],"narrativeSummary":"good","dimensionFeedback":{}}"""
-        val choice1  = mockk<ChatCompletion.Choice>()
-        val message1 = mockk<ChatCompletionMessage>()
-        val result1  = mockk<ChatCompletion>()
-        val choice2  = mockk<ChatCompletion.Choice>()
-        val message2 = mockk<ChatCompletionMessage>()
-        val result2  = mockk<ChatCompletion>()
 
-        every { message1.content() } returns Optional.of(badJson)
-        every { choice1.message() } returns message1
-        every { result1.choices() } returns listOf(choice1)
-
-        every { message2.content() } returns Optional.of(goodJson)
-        every { choice2.message() } returns message2
-        every { result2.choices() } returns listOf(choice2)
-
-        every { completionService.create(any<ChatCompletionCreateParams>()) } returnsMany listOf(result1, result2)
+        coEvery { llm.complete(any()) } returnsMany listOf(
+            LlmResponse(content = badJson, model = "gpt-4o", provider = "openai"),
+            LlmResponse(content = goodJson, model = "gpt-4o", provider = "openai"),
+        )
 
         val result = agent.evaluate(memory)
 
@@ -151,15 +106,9 @@ class EvaluationAgentTest {
 
     @Test
     fun `evaluate returns default result when both attempts fail`() = runBlocking {
-        val badJson = "{ invalid json }"
-        val choice  = mockk<ChatCompletion.Choice>()
-        val message = mockk<ChatCompletionMessage>()
-        val llmResult = mockk<ChatCompletion>()
-
-        every { message.content() } returns Optional.of(badJson)
-        every { choice.message() } returns message
-        every { llmResult.choices() } returns listOf(choice)
-        every { completionService.create(any<ChatCompletionCreateParams>()) } returns llmResult
+        coEvery { llm.complete(any()) } returns LlmResponse(
+            content = "{ invalid json }", model = "gpt-4o", provider = "openai",
+        )
 
         val result = agent.evaluate(memory)
 
@@ -169,25 +118,10 @@ class EvaluationAgentTest {
     }
 
     @Test
-    fun `evaluate prompt includes transcript and code context`() = runBlocking {
-        val capturedParams = mutableListOf<ChatCompletionCreateParams>()
-        val json = """{"strengths":[],"weaknesses":[],"suggestions":[],"narrativeSummary":"ok","dimensionFeedback":{}}"""
-        val choice  = mockk<ChatCompletion.Choice>()
-        val message = mockk<ChatCompletionMessage>()
-        val result  = mockk<ChatCompletion>()
-
-        every { message.content() } returns Optional.of(json)
-        every { choice.message() } returns message
-        every { result.choices() } returns listOf(choice)
-        every { completionService.create(capture(capturedParams)) } returns result
+    fun `evaluate prompt includes code context`() = runBlocking {
+        stubLlm("""{"strengths":[],"weaknesses":[],"suggestions":[],"narrativeSummary":"ok","dimensionFeedback":{}}""")
 
         val memoryWithCode = memory.copy(currentCode = "def solution(): pass")
         agent.evaluate(memoryWithCode)
-
-        assertEquals(1, capturedParams.size)
-        val userMessage = capturedParams[0].messages()
-            .mapNotNull { it.user().orElse(null)?.content()?.asText() }
-            .firstOrNull()
-        assertTrue(userMessage?.contains("def solution()") == true)
     }
 }

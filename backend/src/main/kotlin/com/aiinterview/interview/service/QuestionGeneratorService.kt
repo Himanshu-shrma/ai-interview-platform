@@ -1,23 +1,17 @@
 package com.aiinterview.interview.service
 
 import com.aiinterview.interview.model.Question
+import com.aiinterview.shared.ai.LlmProviderRegistry
+import com.aiinterview.shared.ai.LlmRequest
+import com.aiinterview.shared.ai.ModelConfig
+import com.aiinterview.shared.ai.ResponseFormat
 import com.aiinterview.shared.domain.Difficulty
 import com.aiinterview.shared.domain.InterviewCategory
 import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
-import com.openai.client.OpenAIClient
-import com.openai.models.ChatModel
-import com.openai.models.ResponseFormatJsonObject
-import com.openai.models.chat.completions.ChatCompletionCreateParams
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
 
-/**
- * Parameters for AI-driven question generation.
- * Used as the request body for POST /api/v1/admin/questions/generate.
- */
 data class QuestionGenerationParams(
     val category: InterviewCategory,
     val difficulty: Difficulty,
@@ -27,34 +21,22 @@ data class QuestionGenerationParams(
     val customInstructions: String? = null,
 )
 
-/**
- * Generates interview questions on demand using GPT-4o.
- *
- * Architecture:
- * - System prompt = STATIC (category schema + rules) — cache-eligible
- * - User prompt   = DYNAMIC (topic + difficulty + company) — appended last
- * - SDK client is BLOCKING — all calls use withContext(Dispatchers.IO)
- * - Retries once on JSON parse failure
- */
 @Service
 class QuestionGeneratorService(
-    private val openAIClient: OpenAIClient,
+    private val llm: LlmProviderRegistry,
+    private val modelConfig: ModelConfig,
     private val objectMapper: ObjectMapper,
 ) {
     private val log = LoggerFactory.getLogger(QuestionGeneratorService::class.java)
 
-    // ── Public API ──────────────────────────────────────────────────────────────
+    suspend fun generateQuestion(params: QuestionGenerationParams): Question {
+        val systemPrompt = systemPromptFor(params.category)
+        val userPrompt = buildUserPrompt(params)
 
-    suspend fun generateQuestion(params: QuestionGenerationParams): Question =
-        withContext(Dispatchers.IO) {
-            val systemPrompt = systemPromptFor(params.category)
-            val userPrompt = buildUserPrompt(params)
+        val parsed = callWithRetry(systemPrompt, userPrompt, params.category)
+        return buildQuestion(parsed, params)
+    }
 
-            val parsed = callWithRetry(systemPrompt, userPrompt, params.category)
-            buildQuestion(parsed, params)
-        }
-
-    /** Converts a question title to a URL-friendly kebab-case slug (max 100 chars). */
     fun generateSlug(title: String): String =
         title.lowercase()
             .replace(Regex("[^a-z0-9\\s-]"), "")
@@ -64,58 +46,51 @@ class QuestionGeneratorService(
             .take(100)
             .ifEmpty { "question" }
 
-    // ── Prompt building ─────────────────────────────────────────────────────────
-
     private fun buildUserPrompt(params: QuestionGenerationParams): String = buildString {
         appendLine("Generate a ${params.difficulty.name} ${params.category.name} question about: ${params.topic}")
         params.targetRole?.let { appendLine("Target role: $it") }
         params.customInstructions?.let { appendLine("Additional instructions: $it") }
-        // Company tailoring appended LAST so static system prompt stays cache-eligible
         params.targetCompany?.let { appendLine(companyTailoring(it.lowercase())) }
     }.trim()
 
     private fun companyTailoring(company: String): String = when (company) {
-        "google"    -> "Company focus: algorithmic depth, graph/tree heavy, Big-O analysis required."
-        "amazon"    -> "Company focus: practical + scalable; weave in leadership principles (ownership, bias for action)."
-        "meta"      -> "Company focus: graph algorithms, product thinking, scale to billions."
+        "google" -> "Company focus: algorithmic depth, graph/tree heavy, Big-O analysis required."
+        "amazon" -> "Company focus: practical + scalable; weave in leadership principles (ownership, bias for action)."
+        "meta" -> "Company focus: graph algorithms, product thinking, scale to billions."
         "microsoft" -> "Company focus: OOP design patterns, practical and clean solutions."
-        "startup"   -> "Company focus: pragmatic, ship-fast, discuss trade-offs explicitly."
-        else        -> "Company focus: balanced general software engineering."
+        "startup" -> "Company focus: pragmatic, ship-fast, discuss trade-offs explicitly."
+        else -> "Company focus: balanced general software engineering."
     }
-
-    // ── GPT-4o call with retry ──────────────────────────────────────────────────
 
     private suspend fun callWithRetry(
         systemPrompt: String,
         userPrompt: String,
         category: InterviewCategory,
-    ): JsonNode = withContext(Dispatchers.IO) {
-        val raw1 = callGpt4o(systemPrompt, userPrompt)
+    ): JsonNode {
+        val raw1 = callLlm(systemPrompt, userPrompt)
         val parsed1 = tryParse(raw1, category)
-        if (parsed1 != null) return@withContext parsed1
+        if (parsed1 != null) return parsed1
 
-        log.warn("First GPT-4o response failed validation, retrying…")
-        val raw2 = callGpt4o(systemPrompt, "Return valid JSON only. $userPrompt")
-        tryParse(raw2, category)
+        log.warn("First LLM response failed validation, retrying…")
+        val raw2 = callLlm(systemPrompt, "Return valid JSON only. $userPrompt")
+        return tryParse(raw2, category)
             ?: throw IllegalStateException(
-                "Question generation failed after retry: invalid JSON or schema violation"
+                "Question generation failed after retry: invalid JSON or schema violation",
             )
     }
 
-    private fun callGpt4o(system: String, user: String): String {
-        val completion = openAIClient.chat().completions().create(
-            ChatCompletionCreateParams.builder()
-                .model(ChatModel.GPT_4O)
-                .addSystemMessage(system)
-                .addUserMessage(user)
-                .responseFormat(ResponseFormatJsonObject.builder().build())
-                .build()
+    private suspend fun callLlm(system: String, user: String): String {
+        val response = llm.complete(
+            LlmRequest.build(
+                systemPrompt = system,
+                userMessage = user,
+                model = modelConfig.generatorModel,
+                maxTokens = 1000,
+                responseFormat = ResponseFormat.JSON,
+            ),
         )
-        return completion.choices().firstOrNull()
-            ?.message()?.content()?.orElse("{}") ?: "{}"
+        return response.content
     }
-
-    // ── JSON parsing + validation ───────────────────────────────────────────────
 
     private fun tryParse(raw: String, category: InterviewCategory): JsonNode? {
         val cleaned = raw.trim()
@@ -143,49 +118,44 @@ class QuestionGeneratorService(
         }
     }
 
-    // ── Question entity building ────────────────────────────────────────────────
-
     private fun buildQuestion(node: JsonNode, params: QuestionGenerationParams): Question {
         val title = node.get("title")?.asText()?.trim() ?: params.topic
 
-        // CASE_STUDY has no matching Postgres interview_type enum value → use CODING
         val dbType = when (params.category) {
-            InterviewCategory.CODING       -> "CODING"
-            InterviewCategory.DSA          -> "DSA"
-            InterviewCategory.BEHAVIORAL   -> "BEHAVIORAL"
+            InterviewCategory.CODING -> "CODING"
+            InterviewCategory.DSA -> "DSA"
+            InterviewCategory.BEHAVIORAL -> "BEHAVIORAL"
             InterviewCategory.SYSTEM_DESIGN -> "SYSTEM_DESIGN"
-            InterviewCategory.CASE_STUDY   -> "CODING"
+            InterviewCategory.CASE_STUDY -> "CODING"
         }
 
         return Question(
-            title           = title,
-            description     = node.get("description")?.asText() ?: "",
-            type            = dbType,
-            difficulty      = params.difficulty.name,
-            topicTags       = arrayOf(params.topic),
-            examples        = node.get("examples")?.let { objectMapper.writeValueAsString(it) },
+            title = title,
+            description = node.get("description")?.asText() ?: "",
+            type = dbType,
+            difficulty = params.difficulty.name,
+            topicTags = arrayOf(params.topic),
+            examples = node.get("examples")?.let { objectMapper.writeValueAsString(it) },
             constraintsText = node.get("constraints")?.asText(),
-            testCases       = node.get("test_cases")?.let { objectMapper.writeValueAsString(it) },
-            solutionHints   = node.get("solution_hints")?.let { objectMapper.writeValueAsString(it) },
+            testCases = node.get("test_cases")?.let { objectMapper.writeValueAsString(it) },
+            solutionHints = node.get("solution_hints")?.let { objectMapper.writeValueAsString(it) },
             optimalApproach = node.get("optimal_approach")?.asText(),
             followUpPrompts = node.get("follow_up_prompts")?.let { objectMapper.writeValueAsString(it) },
-            source          = "AI_GENERATED",
+            source = "AI_GENERATED",
             generationParams = objectMapper.writeValueAsString(params),
-            spaceComplexity  = node.get("space_complexity")?.asText(),
-            timeComplexity   = node.get("time_complexity")?.asText(),
+            spaceComplexity = node.get("space_complexity")?.asText(),
+            timeComplexity = node.get("time_complexity")?.asText(),
             evaluationCriteria = node.get("evaluation_criteria")?.let { objectMapper.writeValueAsString(it) },
-            slug            = generateSlug(title),
-            category        = params.category.name,
+            slug = generateSlug(title),
+            category = params.category.name,
         )
     }
 
-    // ── Static system prompts (cache-eligible — same for all requests of a category) ──
-
     private fun systemPromptFor(category: InterviewCategory): String = when (category) {
         InterviewCategory.CODING, InterviewCategory.DSA -> CODING_DSA_PROMPT
-        InterviewCategory.BEHAVIORAL                    -> BEHAVIORAL_PROMPT
-        InterviewCategory.SYSTEM_DESIGN                 -> SYSTEM_DESIGN_PROMPT
-        InterviewCategory.CASE_STUDY                    -> CASE_STUDY_PROMPT
+        InterviewCategory.BEHAVIORAL -> BEHAVIORAL_PROMPT
+        InterviewCategory.SYSTEM_DESIGN -> SYSTEM_DESIGN_PROMPT
+        InterviewCategory.CASE_STUDY -> CASE_STUDY_PROMPT
     }
 
     companion object {

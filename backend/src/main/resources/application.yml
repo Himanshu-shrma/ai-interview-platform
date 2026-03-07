@@ -52,15 +52,33 @@ clerk:
   publishable-key: ${CLERK_PUBLISHABLE_KEY:}
   jwks-cache-ttl-minutes: 60
 
-# ── OpenAI ──────────────────────────────────────────────────────────────────
-openai:
-  api-key: ${OPENAI_API_KEY:}
-  model:
-    interviewer: gpt-4o
-    background: gpt-4o-mini
-    generator: gpt-4o
-  max-tokens: 1000
-  timeout-seconds: 30
+# ── LLM Provider ─────────────────────────────────────────────────────────────
+# Active provider: openai | groq | gemini
+llm:
+  provider: ${LLM_PROVIDER:openai}
+  fallback-provider: ${LLM_FALLBACK_PROVIDER:}
+
+  openai:
+    api-key: ${OPENAI_API_KEY:}
+    base-url: ${OPENAI_BASE_URL:https://api.openai.com/v1}
+
+  groq:
+    api-key: ${GROQ_API_KEY:}
+    base-url: ${GROQ_BASE_URL:https://api.groq.com/openai/v1}
+
+  gemini:
+    api-key: ${GEMINI_API_KEY:}
+    base-url: ${GEMINI_BASE_URL:https://generativelanguage.googleapis.com}
+
+  # Resolved models — agents inject from here
+  # Override per-model via env vars; defaults match openai
+  # For groq: set LLM_INTERVIEWER_MODEL=llama-3.3-70b-versatile etc.
+  # For gemini: set LLM_INTERVIEWER_MODEL=gemini-1.5-pro etc.
+  resolved:
+    interviewer-model: ${LLM_INTERVIEWER_MODEL:gpt-4o}
+    background-model: ${LLM_BACKGROUND_MODEL:gpt-4o-mini}
+    generator-model: ${LLM_GENERATOR_MODEL:gpt-4o}
+    evaluator-model: ${LLM_EVALUATOR_MODEL:gpt-4o}
 
 # ── Interview business rules ──────────────────────────────────────────────────
 interview:

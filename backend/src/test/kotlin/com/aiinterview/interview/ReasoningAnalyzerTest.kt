@@ -7,16 +7,15 @@ import com.aiinterview.interview.service.CandidateAnalysis
 import com.aiinterview.interview.service.EvalScores
 import com.aiinterview.interview.service.InterviewMemory
 import com.aiinterview.interview.service.RedisMemoryService
+import com.aiinterview.shared.ai.LlmProviderRegistry
+import com.aiinterview.shared.ai.LlmResponse
+import com.aiinterview.shared.ai.ModelConfig
 import com.fasterxml.jackson.databind.DeserializationFeature
 import com.fasterxml.jackson.databind.SerializationFeature
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
-import com.openai.client.OpenAIClient
-import com.openai.models.chat.completions.ChatCompletion
-import com.openai.models.chat.completions.ChatCompletionCreateParams
 import io.mockk.coEvery
 import io.mockk.coVerify
-import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -28,19 +27,20 @@ import java.util.UUID
 
 class ReasoningAnalyzerTest {
 
-    private val openAIClient    = mockk<OpenAIClient>()
-    private val memoryService   = mockk<RedisMemoryService>()
-    private val objectMapper    = jacksonObjectMapper().apply {
+    private val llm           = mockk<LlmProviderRegistry>()
+    private val modelConfig   = ModelConfig()
+    private val memoryService = mockk<RedisMemoryService>()
+    private val objectMapper  = jacksonObjectMapper().apply {
         registerModule(JavaTimeModule())
         disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS)
         configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false)
     }
 
     private val analyzer = ReasoningAnalyzer(
-        openAIClient       = openAIClient,
+        llm                = llm,
+        modelConfig        = modelConfig,
         redisMemoryService = memoryService,
         objectMapper       = objectMapper,
-        model              = "gpt-4o-mini",
     )
 
     private val sessionId = UUID.randomUUID()
@@ -121,7 +121,6 @@ class ReasoningAnalyzerTest {
     @Test
     fun `malformed JSON returns fallback with null transition`() = runTest {
         stubLlm("this is not JSON { broken")
-        // No updateMemory call expected for fallback
 
         val result = analyzer.analyze(memory, "some answer")
 
@@ -131,20 +130,8 @@ class ReasoningAnalyzerTest {
     // ── helpers ───────────────────────────────────────────────────────────────
 
     private fun stubLlm(responseText: String) {
-        every { openAIClient.chat() } returns mockk {
-            every { completions() } returns mockk {
-                every { create(any<ChatCompletionCreateParams>()) } returns mockChatCompletion(responseText)
-            }
-        }
-    }
-
-    private fun mockChatCompletion(text: String): ChatCompletion = mockk {
-        every { choices() } returns listOf(
-            mockk {
-                every { message() } returns mockk {
-                    every { content() } returns java.util.Optional.of(text)
-                }
-            }
+        coEvery { llm.complete(any()) } returns LlmResponse(
+            content = responseText, model = "gpt-4o-mini", provider = "openai",
         )
     }
 

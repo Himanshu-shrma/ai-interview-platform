@@ -2,53 +2,36 @@ package com.aiinterview.interview
 
 import com.aiinterview.interview.service.QuestionGenerationParams
 import com.aiinterview.interview.service.QuestionGeneratorService
+import com.aiinterview.shared.ai.LlmProviderRegistry
+import com.aiinterview.shared.ai.LlmResponse
+import com.aiinterview.shared.ai.ModelConfig
 import com.aiinterview.shared.domain.Difficulty
 import com.aiinterview.shared.domain.InterviewCategory
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
-import com.openai.client.OpenAIClient
-import com.openai.models.chat.completions.ChatCompletion
-import com.openai.models.chat.completions.ChatCompletionMessage
-import com.openai.services.blocking.ChatService
-import com.openai.services.blocking.chat.ChatCompletionService
-import io.mockk.every
+import io.mockk.coEvery
+import io.mockk.coVerify
 import io.mockk.mockk
-import io.mockk.verify
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
-import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
-import java.util.Optional
 
 class QuestionGeneratorServiceTest {
 
-    private val openAIClient        = mockk<OpenAIClient>()
-    private val chatService         = mockk<ChatService>()
-    private val completionService   = mockk<ChatCompletionService>()
-    private val objectMapper        = jacksonObjectMapper()
-    private val service             = QuestionGeneratorService(openAIClient, objectMapper)
-
-    @BeforeEach
-    fun setup() {
-        every { openAIClient.chat() }         returns chatService
-        every { chatService.completions() }   returns completionService
-    }
+    private val llm          = mockk<LlmProviderRegistry>()
+    private val modelConfig  = ModelConfig()
+    private val objectMapper = jacksonObjectMapper()
+    private val service      = QuestionGeneratorService(llm, modelConfig, objectMapper)
 
     // ── Helpers ──────────────────────────────────────────────────────────────────
 
-    private fun mockCompletion(json: String): ChatCompletion {
-        val message    = mockk<ChatCompletionMessage>()
-        every { message.content() } returns Optional.of(json)
-
-        val choice = mockk<ChatCompletion.Choice>()
-        every { choice.message() } returns message
-
-        val completion = mockk<ChatCompletion>()
-        every { completion.choices() } returns listOf(choice)
-        return completion
+    private fun stubLlm(json: String) {
+        coEvery { llm.complete(any()) } returns LlmResponse(
+            content = json, model = "gpt-4o", provider = "openai",
+        )
     }
 
     // ── Tests ────────────────────────────────────────────────────────────────────
@@ -78,7 +61,7 @@ class QuestionGeneratorServiceTest {
         }
         """.trimIndent()
 
-        every { completionService.create(any()) } returns mockCompletion(json)
+        stubLlm(json)
 
         val params = QuestionGenerationParams(
             category   = InterviewCategory.CODING,
@@ -128,7 +111,7 @@ class QuestionGeneratorServiceTest {
         }
         """.trimIndent()
 
-        every { completionService.create(any()) } returns mockCompletion(json)
+        stubLlm(json)
 
         val question = service.generateQuestion(
             QuestionGenerationParams(InterviewCategory.DSA, Difficulty.MEDIUM, "heap")
@@ -156,7 +139,7 @@ class QuestionGeneratorServiceTest {
         }
         """.trimIndent()
 
-        every { completionService.create(any()) } returns mockCompletion(json)
+        stubLlm(json)
 
         val params = QuestionGenerationParams(
             category   = InterviewCategory.BEHAVIORAL,
@@ -198,9 +181,9 @@ class QuestionGeneratorServiceTest {
         }
         """.trimIndent()
 
-        every { completionService.create(any()) } returnsMany listOf(
-            mockCompletion(badJson),
-            mockCompletion(goodJson),
+        coEvery { llm.complete(any()) } returnsMany listOf(
+            LlmResponse(content = badJson, model = "gpt-4o", provider = "openai"),
+            LlmResponse(content = goodJson, model = "gpt-4o", provider = "openai"),
         )
 
         val question = service.generateQuestion(
@@ -209,20 +192,21 @@ class QuestionGeneratorServiceTest {
 
         assertNotNull(question.title)
         assertEquals("Two Sum", question.title)
-        // Two calls made: first failed, second succeeded
-        verify(exactly = 2) { completionService.create(any()) }
+        coVerify(exactly = 2) { llm.complete(any()) }
     }
 
     @Test
     fun `throws after two consecutive bad JSON responses`() = runTest {
-        every { completionService.create(any()) } returns mockCompletion("bad json")
+        coEvery { llm.complete(any()) } returns LlmResponse(
+            content = "bad json", model = "gpt-4o", provider = "openai",
+        )
 
         assertThrows<IllegalStateException> {
             service.generateQuestion(
                 QuestionGenerationParams(InterviewCategory.CODING, Difficulty.EASY, "sorting")
             )
         }
-        verify(exactly = 2) { completionService.create(any()) }
+        coVerify(exactly = 2) { llm.complete(any()) }
     }
 
     @Test
@@ -264,7 +248,7 @@ class QuestionGeneratorServiceTest {
         }
         """.trimIndent()
 
-        every { completionService.create(any()) } returns mockCompletion(json)
+        stubLlm(json)
 
         val question = service.generateQuestion(
             QuestionGenerationParams(

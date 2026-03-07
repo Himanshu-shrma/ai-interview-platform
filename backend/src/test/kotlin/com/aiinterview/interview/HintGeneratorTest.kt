@@ -6,12 +6,11 @@ import com.aiinterview.interview.service.InterviewMemory
 import com.aiinterview.interview.service.RedisMemoryService
 import com.aiinterview.interview.ws.OutboundMessage
 import com.aiinterview.interview.ws.WsSessionRegistry
-import com.openai.client.OpenAIClient
-import com.openai.models.chat.completions.ChatCompletion
-import com.openai.models.chat.completions.ChatCompletionCreateParams
+import com.aiinterview.shared.ai.LlmProviderRegistry
+import com.aiinterview.shared.ai.LlmResponse
+import com.aiinterview.shared.ai.ModelConfig
 import io.mockk.coEvery
 import io.mockk.coVerify
-import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -22,15 +21,16 @@ import java.util.UUID
 
 class HintGeneratorTest {
 
-    private val openAIClient  = mockk<OpenAIClient>()
+    private val llm           = mockk<LlmProviderRegistry>()
+    private val modelConfig   = ModelConfig()
     private val memoryService = mockk<RedisMemoryService>()
     private val registry      = mockk<WsSessionRegistry>(relaxed = true)
 
     private val generator = HintGenerator(
-        openAIClient       = openAIClient,
+        llm                = llm,
+        modelConfig        = modelConfig,
         redisMemoryService = memoryService,
         registry           = registry,
-        model              = "gpt-4o-mini",
     )
 
     private val sessionId = UUID.randomUUID()
@@ -134,20 +134,8 @@ class HintGeneratorTest {
     // ── helpers ───────────────────────────────────────────────────────────────
 
     private fun stubLlm(response: String) {
-        every { openAIClient.chat() } returns mockk {
-            every { completions() } returns mockk {
-                every { create(any<ChatCompletionCreateParams>()) } returns mockChatCompletion(response)
-            }
-        }
-    }
-
-    private fun mockChatCompletion(text: String): ChatCompletion = mockk {
-        every { choices() } returns listOf(
-            mockk {
-                every { message() } returns mockk {
-                    every { content() } returns java.util.Optional.of(text)
-                }
-            }
+        coEvery { llm.complete(any()) } returns LlmResponse(
+            content = response, model = "gpt-4o-mini", provider = "openai",
         )
     }
 
