@@ -156,60 +156,59 @@ export interface PagedResponse<T> {
   total: number
 }
 
-// ── WebSocket Messages ──
+// ── WebSocket Inbound (client → server) ──
 
 export type WsInboundType =
-  | 'START_INTERVIEW'
   | 'CANDIDATE_MESSAGE'
+  | 'CODE_RUN'
   | 'CODE_SUBMIT'
-  | 'HINT_REQUEST'
-  | 'NEXT_QUESTION'
+  | 'CODE_UPDATE'
+  | 'REQUEST_HINT'
   | 'END_INTERVIEW'
-  | 'SESSION_PING'
-
-export type WsOutboundType =
-  | 'INTERVIEWER_MESSAGE'
-  | 'QUESTION'
-  | 'CODE_RESULT'
-  | 'HINT'
-  | 'STATE_CHANGE'
-  | 'SESSION_END'
-  | 'ERROR'
-  | 'SESSION_PONG'
+  | 'PING'
 
 export interface WsInboundMessage {
   type: WsInboundType
   [key: string]: unknown
 }
 
+// ── WebSocket Outbound (server → client) ──
+
+export type WsOutboundType =
+  | 'INTERVIEW_STARTED'
+  | 'AI_MESSAGE'
+  | 'AI_CHUNK'
+  | 'STATE_CHANGE'
+  | 'CODE_RUN_RESULT'
+  | 'CODE_RESULT'
+  | 'HINT_RESPONSE'
+  | 'HINT_DELIVERED'
+  | 'INTERVIEW_ENDED'
+  | 'SESSION_END'
+  | 'ERROR'
+  | 'PONG'
+
 export interface WsOutboundMessage {
   type: WsOutboundType
   [key: string]: unknown
 }
 
-export interface InterviewerMessage extends WsOutboundMessage {
-  type: 'INTERVIEWER_MESSAGE'
-  content: string
+export interface InterviewStartedMessage extends WsOutboundMessage {
+  type: 'INTERVIEW_STARTED'
+  sessionId: string
+  state: string
 }
 
-export interface QuestionMessage extends WsOutboundMessage {
-  type: 'QUESTION'
-  question: CandidateQuestion
-  questionIndex: number
-  totalQuestions: number
+export interface AiMessageMessage extends WsOutboundMessage {
+  type: 'AI_MESSAGE'
+  text: string
+  state: string
 }
 
-export interface CodeResultMessage extends WsOutboundMessage {
-  type: 'CODE_RESULT'
-  results: TestResult[]
-  allPassed: boolean
-}
-
-export interface HintMessage extends WsOutboundMessage {
-  type: 'HINT'
-  content: string
-  hintsUsed: number
-  maxHints: number
+export interface AiChunkMessage extends WsOutboundMessage {
+  type: 'AI_CHUNK'
+  delta: string
+  done: boolean
 }
 
 export interface StateChangeMessage extends WsOutboundMessage {
@@ -217,19 +216,47 @@ export interface StateChangeMessage extends WsOutboundMessage {
   state: string
 }
 
+export interface CodeRunResultMessage extends WsOutboundMessage {
+  type: 'CODE_RUN_RESULT'
+  stdout: string | null
+  stderr: string | null
+  exitCode: number | null
+}
+
+export interface CodeResultMessage extends WsOutboundMessage {
+  type: 'CODE_RESULT'
+  status: string
+  stdout: string | null
+  stderr: string | null
+  runtimeMs: number | null
+  testResults: TestResult[] | null
+}
+
+export interface HintDeliveredMessage extends WsOutboundMessage {
+  type: 'HINT_DELIVERED'
+  hint: string
+  level: number
+  hintsRemaining: number
+  refused: boolean
+}
+
 export interface SessionEndMessage extends WsOutboundMessage {
   type: 'SESSION_END'
   reportId: string
 }
 
+export interface WsErrorMessage extends WsOutboundMessage {
+  type: 'ERROR'
+  code: string
+  message: string
+}
+
 // ── Code Execution ──
 
 export interface TestResult {
-  input: string
-  expectedOutput: string
-  actualOutput: string
   passed: boolean
-  time: string
-  memory: number
-  stderr?: string
+  input: string | null
+  expected: string | null
+  actual: string | null
+  runtimeMs: number | null
 }

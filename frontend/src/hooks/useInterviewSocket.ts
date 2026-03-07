@@ -63,7 +63,7 @@ export function useInterviewSocket({
       clearHeartbeat()
       heartbeatRef.current = setInterval(() => {
         if (ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({ type: 'SESSION_PING' }))
+          ws.send(JSON.stringify({ type: 'PING' }))
         }
       }, HEARTBEAT_INTERVAL)
     }
