@@ -24,6 +24,7 @@ class QuestionController(
     private val questionService: QuestionService,
     private val objectMapper: ObjectMapper,
 ) {
+    private val log = org.slf4j.LoggerFactory.getLogger(javaClass)
 
     /** List all non-deleted questions (auth required — used for debug/admin). */
     @GetMapping("/questions")
@@ -50,7 +51,10 @@ class QuestionController(
         runCatching { questionService.getOrGenerateQuestion(params).toInternalDto(objectMapper) }
             .fold(
                 onSuccess  = { ResponseEntity.status(HttpStatus.CREATED).body(it) },
-                onFailure  = { ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build() },
+                onFailure  = {
+                    log.error("generateQuestion failed", it)
+                    ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build()
+                },
             )
 
     /** Soft-delete a question (admin only). */

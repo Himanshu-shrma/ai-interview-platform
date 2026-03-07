@@ -81,6 +81,8 @@ class InterviewController(
 @RestControllerAdvice
 class GlobalExceptionHandler {
 
+    private val log = org.slf4j.LoggerFactory.getLogger(javaClass)
+
     @ExceptionHandler(NoSuchElementException::class)
     fun handleNotFound(ex: NoSuchElementException): ResponseEntity<ApiError> =
         ResponseEntity.status(404).body(
@@ -100,8 +102,10 @@ class GlobalExceptionHandler {
         )
 
     @ExceptionHandler(Exception::class)
-    fun handleGeneral(ex: Exception): ResponseEntity<ApiError> =
-        ResponseEntity.status(500).body(
+    fun handleGeneral(ex: Exception): ResponseEntity<ApiError> {
+        log.error("Unhandled exception: {}", ex.message, ex)
+        return ResponseEntity.status(500).body(
             ApiError(error = "INTERNAL_ERROR", message = "An unexpected error occurred")
         )
+    }
 }
