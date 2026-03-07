@@ -24,6 +24,7 @@ export function useInterviewSocket({
   const wsRef = useRef<WebSocket | null>(null)
   const retryCountRef = useRef(0)
   const heartbeatRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const queueRef = useRef<WsInboundMessage[]>([])
   const [status, setStatus] = useState<ConnectionStatus>('disconnected')
 
   const updateStatus = useCallback(
@@ -58,6 +59,12 @@ export function useInterviewSocket({
     ws.onopen = () => {
       retryCountRef.current = 0
       updateStatus('connected')
+
+      // Flush queued messages
+      while (queueRef.current.length > 0) {
+        const queued = queueRef.current.shift()!
+        ws.send(JSON.stringify(queued))
+      }
 
       // Start heartbeat
       clearHeartbeat()
@@ -99,6 +106,9 @@ export function useInterviewSocket({
   const send = useCallback((msg: WsInboundMessage) => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify(msg))
+    } else {
+      // Queue messages during reconnect
+      queueRef.current.push(msg)
     }
   }, [])
 
