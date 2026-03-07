@@ -23,18 +23,17 @@ import type { ReportDto, ScoresDto } from '@/types'
 function useCountUp(target: number, duration = 1200) {
   const [value, setValue] = useState(0)
   useEffect(() => {
-    let cancelled = false
-    const startTime = performance.now()
-    function tick(now: number) {
-      if (cancelled) return
-      const elapsed = now - startTime
-      const progress = Math.min(elapsed / duration, 1)
+    let start: number
+    let frame: number
+    const animate = (timestamp: number) => {
+      if (!start) start = timestamp
+      const progress = Math.min((timestamp - start) / duration, 1)
       const eased = 1 - (1 - progress) * (1 - progress)
-      setValue(eased * target)
-      if (progress < 1) requestAnimationFrame(tick)
+      setValue(Math.floor(eased * target * 10) / 10)
+      if (progress < 1) frame = requestAnimationFrame(animate)
     }
-    requestAnimationFrame(tick)
-    return () => { cancelled = true }
+    frame = requestAnimationFrame(animate)
+    return () => cancelAnimationFrame(frame)
   }, [target, duration])
   return value
 }
