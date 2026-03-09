@@ -82,6 +82,7 @@ class RedisMemoryServiceTest {
         slug               = "two-sum",
         source             = "AI_GENERATED",
         generationParams   = null,
+        codeTemplates      = null,
         createdAt          = OffsetDateTime.now(),
     )
 
