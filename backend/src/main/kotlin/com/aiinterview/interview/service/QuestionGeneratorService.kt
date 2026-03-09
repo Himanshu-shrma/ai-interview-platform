@@ -34,7 +34,17 @@ class QuestionGeneratorService(
         val userPrompt = buildUserPrompt(params)
 
         val parsed = callWithRetry(systemPrompt, userPrompt, params.category)
-        return buildQuestion(parsed, params)
+        val question = buildQuestion(parsed, params)
+
+        // Generate code templates for coding/DSA questions
+        if (params.category in listOf(InterviewCategory.CODING, InterviewCategory.DSA)) {
+            val templates = generateCodeTemplates(question.title, question.description)
+            if (templates != null) {
+                return question.copy(codeTemplates = templates)
+            }
+        }
+
+        return question
     }
 
     fun generateSlug(title: String): String =
@@ -156,6 +166,45 @@ class QuestionGeneratorService(
         InterviewCategory.BEHAVIORAL -> BEHAVIORAL_PROMPT
         InterviewCategory.SYSTEM_DESIGN -> SYSTEM_DESIGN_PROMPT
         InterviewCategory.CASE_STUDY -> CASE_STUDY_PROMPT
+    }
+
+    /**
+     * Generates starter code templates for 5 languages.
+     * Templates contain the correct function signature with a "// your code here" placeholder.
+     */
+    private suspend fun generateCodeTemplates(title: String, description: String): String? = try {
+        val templatePrompt = """
+For this coding problem:
+"$title: ${description.take(300)}"
+
+Generate starter code templates. Each template should have:
+- Correct class/function signature for the problem
+- Correct parameter names and types
+- A single comment: // your code here  (or # your code here for Python)
+- For Java: use class Main (Judge0 requirement), not Solution
+
+Return ONLY valid JSON:
+{
+  "python": "def function_name(params):\\n    # your code here\\n    pass",
+  "java": "import java.util.*;\\n\\npublic class Main {\\n    public static ReturnType functionName(params) {\\n        // your code here\\n    }\\n\\n    public static void main(String[] args) {\\n        // test your solution here\\n    }\\n}",
+  "javascript": "function functionName(params) {\\n    // your code here\\n}",
+  "cpp": "#include <vector>\\nusing namespace std;\\n\\nReturnType functionName(params) {\\n    // your code here\\n}",
+  "typescript": "function functionName(params: types): ReturnType {\\n    // your code here\\n}"
+}
+""".trimIndent()
+
+        val raw = callLlm(
+            "You generate code templates for interview problems. Return only JSON, no markdown.",
+            templatePrompt,
+        )
+        val cleaned = raw.trim()
+            .removePrefix("```json").removePrefix("```").removeSuffix("```").trim()
+        // Validate it's valid JSON
+        objectMapper.readTree(cleaned)
+        cleaned
+    } catch (e: Exception) {
+        log.warn("Code template generation failed for '{}': {}", title, e.message)
+        null
     }
 
     companion object {

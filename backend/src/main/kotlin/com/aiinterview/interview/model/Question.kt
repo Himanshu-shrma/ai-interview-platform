@@ -39,6 +39,10 @@ data class Question(
     val slug: String? = null,
     /** Maps to interview_category VARCHAR(30) column — canonical routing field */
     @Column("interview_category") val category: String = "CODING",
+    /** JSONB — starter code templates per language: {"python": "def ...", "java": "class ..."} */
+    val codeTemplates: String? = null,
+    /** JSONB — function signature metadata for template generation */
+    val functionSignature: String? = null,
 ) {
     // Required because data class contains Array field
     override fun equals(other: Any?): Boolean {

@@ -179,7 +179,13 @@ class InterviewWebSocketHandler(
             currentQuestionIndex = memory.currentQuestionIndex,
             totalQuestions       = memory.totalQuestions,
             currentQuestion      = memory.currentQuestion?.let {
-                QuestionSnapshot(title = it.title, description = it.description)
+                val templates = it.codeTemplates?.let { ct ->
+                    try {
+                        @Suppress("UNCHECKED_CAST")
+                        objectMapper.readValue(ct.toString(), Map::class.java) as? Map<String, String>
+                    } catch (_: Exception) { null }
+                }
+                QuestionSnapshot(title = it.title, description = it.description, codeTemplates = templates)
             },
             currentCode          = memory.currentCode,
             programmingLanguage  = memory.programmingLanguage,
@@ -222,6 +228,21 @@ class InterviewWebSocketHandler(
 
             "CANDIDATE_MESSAGE" -> {
                 val msg = objectMapper.treeToValue(tree, InboundMessage.CandidateMessage::class.java)
+                // Sync code snapshot from editor into memory (if provided)
+                msg.codeSnapshot?.let { snap ->
+                    if (snap.hasMeaningfulCode && !snap.content.isNullOrBlank()) {
+                        try {
+                            redisMemoryService.updateMemory(sessionId) { mem ->
+                                mem.copy(
+                                    currentCode = snap.content,
+                                    programmingLanguage = snap.language ?: mem.programmingLanguage,
+                                )
+                            }
+                        } catch (e: Exception) {
+                            log.debug("Failed to sync code snapshot for session {}: {}", sessionId, e.message)
+                        }
+                    }
+                }
                 conversationEngine.handleCandidateMessage(sessionId, msg.text)
             }
 

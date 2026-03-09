@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useRef, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useInterviewDetail } from '@/hooks/useInterviews'
 import { useInterviewSocket } from '@/hooks/useInterviewSocket'
@@ -33,7 +33,15 @@ import type {
   QuestionTransitionMessage,
   SessionEndMessage,
   WsErrorMessage,
+  CodeSnapshot,
 } from '@/types'
+
+function hasMeaningfulCode(code: string): boolean {
+  if (!code || code.trim().length < 20) return false
+  if (code.includes('// your code here') && code.split('\n').length <= 6) return false
+  if (code.includes('# your code here') && code.split('\n').length <= 4) return false
+  return true
+}
 
 export default function InterviewPage() {
   const { sessionId } = useParams<{ sessionId: string }>()
@@ -61,6 +69,8 @@ export default function InterviewPage() {
   const [reportId, setReportId] = useState<string | null>(null)
   const [endDialogOpen, setEndDialogOpen] = useState(false)
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0)
+  const [editorHighlighted, setEditorHighlighted] = useState(false)
+  const [codeTemplates, setCodeTemplates] = useState<Record<string, string> | null>(null)
 
   // Track whether AI is mid-stream
   const isStreamingRef = useRef(false)
@@ -68,6 +78,26 @@ export default function InterviewPage() {
   // Ref for session data — avoids putting `session` in handleMessage deps
   const sessionRef = useRef(session)
   sessionRef.current = session
+
+  // Ref for current code — avoids stale closures in handleSendMessage
+  const currentCodeRef = useRef(currentCode)
+  currentCodeRef.current = currentCode
+  const currentLanguageRef = useRef(currentLanguage)
+  currentLanguageRef.current = currentLanguage
+  const codeResultRef = useRef(codeResult)
+  codeResultRef.current = codeResult
+
+  // Load code template when language changes and templates are available
+  useEffect(() => {
+    if (!codeTemplates) return
+    const template = codeTemplates[currentLanguage]
+    if (!template) return
+    // Only auto-fill if editor is empty or still has a template
+    const currentIsTemplate = Object.values(codeTemplates).includes(currentCode.trim())
+    if (!currentCode || currentCode.trim().length < 5 || currentIsTemplate) {
+      setCurrentCode(template)
+    }
+  }, [codeTemplates, currentLanguage]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // WS message handler
   const handleMessage = useCallback(
@@ -107,6 +137,9 @@ export default function InterviewPage() {
           setCurrentState(sc.state)
           if (sc.state === 'CODING_CHALLENGE') {
             setShowCodeEditor(true)
+            // Visual highlight when CODING stage begins
+            setEditorHighlighted(true)
+            setTimeout(() => setEditorHighlighted(false), 3000)
           }
           break
         }
@@ -145,6 +178,13 @@ export default function InterviewPage() {
           setHintState(null)
           setHintsGiven(0)
           setShowCodeEditor(false)
+          setEditorHighlighted(false)
+          // Load code templates for the new question
+          if (qt.codeTemplates) {
+            setCodeTemplates(qt.codeTemplates)
+          } else {
+            setCodeTemplates(null)
+          }
           addAiMessage(`Moving to Question ${qt.questionIndex + 1}: **${qt.questionTitle}**`)
           break
         }
@@ -167,6 +207,10 @@ export default function InterviewPage() {
           if (sync.programmingLanguage) setCurrentLanguage(sync.programmingLanguage)
           setHintsGiven(sync.hintsGiven)
           setShowCodeEditor(sync.showCodeEditor)
+          // Restore code templates if available
+          if (sync.currentQuestion?.codeTemplates) {
+            setCodeTemplates(sync.currentQuestion.codeTemplates)
+          }
           // Restore conversation history
           const restored = sync.messages.map((m, i) => ({
             id: `recovered-${i}-${Date.now()}`,
@@ -204,11 +248,22 @@ export default function InterviewPage() {
     onMessage: handleMessage,
   })
 
-  // Actions
+  // Actions — includes codeSnapshot with every message for AI awareness
   function handleSendMessage(content: string) {
     addCandidateMessage(content)
     setIsAiThinking(true)
-    send({ type: 'CANDIDATE_MESSAGE', text: content })
+    const code = currentCodeRef.current
+    const codeSnapshot: CodeSnapshot = {
+      content: code || null,
+      language: currentLanguageRef.current || null,
+      hasMeaningfulCode: hasMeaningfulCode(code),
+      lineCount: code ? code.split('\n').length : 0,
+      hasRunResults: codeResultRef.current !== null,
+      lastRunPassed: codeResultRef.current && 'status' in codeResultRef.current
+        ? codeResultRef.current.status === 'ACCEPTED'
+        : null,
+    }
+    send({ type: 'CANDIDATE_MESSAGE', text: content, codeSnapshot })
   }
 
   function handleRequestHint() {
@@ -349,9 +404,9 @@ export default function InterviewPage() {
           />
         </div>
 
-        {/* Code panel */}
+        {/* Code panel — with visual highlight on CODING stage entry */}
         {showCodeEditor && (
-          <div className="flex flex-1 flex-col min-w-0">
+          <div className={`flex flex-1 flex-col min-w-0 transition-all duration-500 ${editorHighlighted ? 'ring-2 ring-blue-400 ring-opacity-75' : ''}`}>
             <div className="flex-1 min-h-0">
               <Suspense fallback={<div className="flex items-center justify-center h-full text-muted-foreground">Loading editor...</div>}>
                 <CodeEditor

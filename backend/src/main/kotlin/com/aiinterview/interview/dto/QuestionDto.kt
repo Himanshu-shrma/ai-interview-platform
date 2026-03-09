@@ -49,6 +49,7 @@ data class InternalQuestionDto(
     val slug: String?,
     val source: String,
     val generationParams: JsonNode?,
+    val codeTemplates: JsonNode?,
     val createdAt: OffsetDateTime?,
 )
 
@@ -89,5 +90,6 @@ fun Question.toInternalDto(objectMapper: ObjectMapper) = InternalQuestionDto(
     slug              = slug,
     source            = source,
     generationParams  = generationParams?.let { runCatching { objectMapper.readTree(it) }.getOrNull() },
+    codeTemplates     = codeTemplates?.let { runCatching { objectMapper.readTree(it) }.getOrNull() },
     createdAt         = createdAt,
 )

@@ -77,8 +77,12 @@ class Judge0Client(
         languageId: Int,
         stdin: String? = null,
     ): String {
+        // Java (62): Judge0 saves as Main.java, so public class must be named Main
+        val normalizedCode = if (languageId == 62) {
+            code.replace(Regex("""public\s+class\s+\w+"""), "public class Main")
+        } else code
         val request = Judge0SubmissionRequest(
-            sourceCode = encode(code),
+            sourceCode = encode(normalizedCode),
             languageId = languageId,
             stdin      = stdin?.let { encode(it) },
         )

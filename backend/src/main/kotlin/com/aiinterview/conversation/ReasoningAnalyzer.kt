@@ -41,13 +41,15 @@ Return ONLY valid JSON matching this exact schema:
 
 Rules for codingSignalDetected:
 - Set TRUE when the candidate has explained their approach sufficiently and is ready to code
-- Set TRUE when the candidate says things like "let me code this", "I'll implement it", "let me write the code", "I can code this now"
-- Set TRUE when the candidate has discussed time/space complexity and approach — they should move to coding
+- Set TRUE when the candidate says things like "let me code this", "I'll implement it", "let me write the code"
+- Set TRUE when they have discussed complexity and approach — they should move to coding
 - Set FALSE during initial problem discussion, clarification, or when approach is still unclear
+- Set FALSE if the interview stage is already CODING or REVIEW (they're past this point)
 
 Rules for readyForEvaluation:
-- Set TRUE only when the candidate has BOTH explained their approach AND written/submitted code
-- Set FALSE if they have only discussed the approach but not coded yet
+- Set TRUE only when the candidate has explained approach AND written code AND code has been reviewed
+- Set TRUE when the interview stage is REVIEW or FOLLOWUP and the review seems complete
+- Set FALSE if they are still in CODING stage or have not coded yet
 
 No markdown, no explanation — return ONLY the JSON object."""
     }
@@ -68,16 +70,23 @@ No markdown, no explanation — return ONLY the JSON object."""
             mem.copy(candidateAnalysis = analysisWithTs, evalScores = newScores)
         }
 
+        // Stage-aware transition logic:
+        // Only suggest CODING_CHALLENGE if we're pre-coding (not if already coding/reviewing)
+        // Only suggest EVALUATING if we're past REVIEW stage
+        val stage = memory.interviewStage
         val transition = when {
-            analysis.codingSignalDetected -> InterviewState.CodingChallenge
-            analysis.readyForEvaluation -> InterviewState.Evaluating
-            analysis.gaps.isNotEmpty() -> InterviewState.FollowUp
+            analysis.codingSignalDetected && stage in listOf("CLARIFYING", "APPROACH", "PROBLEM_PRESENTED") ->
+                InterviewState.CodingChallenge
+            analysis.readyForEvaluation && stage in listOf("REVIEW", "FOLLOWUP", "WRAP_UP") ->
+                InterviewState.Evaluating
+            analysis.gaps.isNotEmpty() && stage !in listOf("CODING", "SMALL_TALK") ->
+                InterviewState.FollowUp
             else -> null
         }
 
         log.debug(
-            "Analysis done session={}: correctness={} gaps={} transition={}",
-            memory.sessionId, analysis.correctness, analysis.gaps.size, transition,
+            "Analysis done session={}: stage={} correctness={} gaps={} transition={}",
+            memory.sessionId, stage, analysis.correctness, analysis.gaps.size, transition,
         )
         return AnalysisResult(analysisWithTs, transition)
     }
@@ -118,6 +127,9 @@ No markdown, no explanation — return ONLY the JSON object."""
         }
         append("Current interview stage: ${memory.interviewStage}\n")
         append("Has code been submitted: ${!memory.currentCode.isNullOrBlank()}\n")
+        if (!memory.currentCode.isNullOrBlank()) {
+            append("Code length: ${memory.currentCode.lines().size} lines\n")
+        }
         memory.candidateAnalysis?.let { prev ->
             append("Previous analysis: correctness=${prev.correctness}, gaps=${prev.gaps}\n")
         }

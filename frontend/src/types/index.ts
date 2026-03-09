@@ -247,6 +247,7 @@ export interface QuestionTransitionMessage extends WsOutboundMessage {
   questionIndex: number
   questionTitle: string
   questionDescription: string
+  codeTemplates?: Record<string, string>
 }
 
 export interface SessionEndMessage extends WsOutboundMessage {
@@ -259,7 +260,7 @@ export interface StateSyncMessage extends WsOutboundMessage {
   state: string
   currentQuestionIndex: number
   totalQuestions: number
-  currentQuestion: { title: string; description: string } | null
+  currentQuestion: { title: string; description: string; codeTemplates?: Record<string, string> } | null
   currentCode: string | null
   programmingLanguage: string | null
   hintsGiven: number
@@ -281,4 +282,15 @@ export interface TestResult {
   expected: string | null
   actual: string | null
   runtimeMs: number | null
+}
+
+// ── Code Snapshot (sent with every CANDIDATE_MESSAGE) ──
+
+export interface CodeSnapshot {
+  content: string | null
+  language: string | null
+  hasMeaningfulCode: boolean
+  lineCount: number
+  hasRunResults: boolean
+  lastRunPassed: boolean | null
 }

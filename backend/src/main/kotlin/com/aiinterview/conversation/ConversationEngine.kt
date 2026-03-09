@@ -113,25 +113,16 @@ class ConversationEngine(
             return
         }
 
+        // Start in SMALL_TALK stage — warm greeting, don't present the problem yet.
+        // The problem is presented when interviewStage transitions to PROBLEM_PRESENTED
+        // (triggered after the candidate's first response).
         transition(sessionId, InterviewState.QuestionPresented)
 
-        val q = memory.currentQuestion
-        val openingMessage = if (q != null) {
-            "Hello! I'm your interviewer today. Let's start with this problem:\n\n" +
-            "**${q.title}**\n\n${q.description}\n\n" +
-            "Take a moment to read through it, and then walk me through your initial thoughts."
-        } else {
-            "Hello! I'm your interviewer today. Let's get started. " +
-            "Tell me about your background and what you're hoping to work on today."
-        }
+        val openingMessage = "Hey! How's it going? I'll be your interviewer today. Whenever you're ready, we can jump in."
 
-        // Send the opening message directly — it's a hardcoded greeting, NOT an LLM response.
-        // Passing it through InterviewerAgent as a USER message confuses the LLM into
-        // responding as the candidate instead of the interviewer.
         registry.sendMessage(sessionId, OutboundMessage.AiChunk(delta = openingMessage, done = false))
         registry.sendMessage(sessionId, OutboundMessage.AiChunk(delta = "", done = true))
 
-        // Persist to transcript and DB
         redisMemoryService.appendTranscriptTurn(sessionId, "AI", openingMessage)
         try {
             withContext(Dispatchers.IO) {
@@ -143,7 +134,7 @@ class ConversationEngine(
             log.warn("Failed to persist AI opening message for session {}: {}", sessionId, e.message)
         }
 
-        log.info("Interview started: sessionId={}", sessionId)
+        log.info("Interview started (SMALL_TALK): sessionId={}", sessionId)
     }
 
     /**
@@ -218,8 +209,16 @@ class ConversationEngine(
                 candidateAnalysis    = null,
                 hintsGiven           = 0,
                 followUpsAsked       = emptyList(),
-                interviewStage       = "PROBLEM_PRESENTED",
+                interviewStage       = "PROBLEM_PRESENTED",  // Skip SMALL_TALK for subsequent questions
             )
+        }
+
+        // Parse code templates if available
+        val templates = nextQuestion.codeTemplates?.let { ct ->
+            try {
+                @Suppress("UNCHECKED_CAST")
+                objectMapper.readValue(ct.toString(), Map::class.java) as? Map<String, String>
+            } catch (_: Exception) { null }
         }
 
         // Notify frontend of question transition
@@ -227,6 +226,7 @@ class ConversationEngine(
             questionIndex       = nextIndex,
             questionTitle       = nextQuestion.title,
             questionDescription = nextQuestion.description,
+            codeTemplates       = templates,
         ))
 
         // Present the next question
