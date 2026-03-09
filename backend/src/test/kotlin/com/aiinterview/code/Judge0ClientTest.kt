@@ -35,6 +35,8 @@ class Judge0ClientTest {
         judge0Client = Judge0Client(
             webClientBuilder    = webClientBuilder,
             baseUrl             = "http://localhost:2358",
+            authToken           = "test-token",
+            authHeader          = "X-Auth-Token",
             pollIntervalMs      = 10L,
             pollTimeoutSecs     = 5L,
         )
