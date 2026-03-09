@@ -140,5 +140,5 @@ class Judge0Client(
         Base64.getEncoder().encodeToString(text.toByteArray(Charsets.UTF_8))
 
     private fun decode(encoded: String): String =
-        String(Base64.getDecoder().decode(encoded.trim()), Charsets.UTF_8)
+        String(Base64.getMimeDecoder().decode(encoded), Charsets.UTF_8)
 }
