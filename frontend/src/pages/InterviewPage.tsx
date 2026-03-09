@@ -26,6 +26,7 @@ import type {
   AiChunkMessage,
   AiMessageMessage,
   StateChangeMessage,
+  StateSyncMessage,
   CodeResultMessage,
   CodeRunResultMessage,
   HintDeliveredMessage,
@@ -40,7 +41,7 @@ export default function InterviewPage() {
   const { data: session } = useInterviewDetail(sessionId ?? '')
 
   // Conversation state
-  const { messages, addCandidateMessage, appendAiToken, finalizeAiMessage, addAiMessage } =
+  const { messages, addCandidateMessage, appendAiToken, finalizeAiMessage, addAiMessage, replaceAll } =
     useConversation()
 
   // Interview state
@@ -157,9 +158,34 @@ export default function InterviewPage() {
           break
         }
 
+        case 'STATE_SYNC': {
+          const sync = msg as StateSyncMessage
+          // Restore full interview state after reconnect
+          setCurrentState(sync.state)
+          setCurrentQuestionIndex(sync.currentQuestionIndex)
+          setCurrentCode(sync.currentCode ?? '')
+          if (sync.programmingLanguage) setCurrentLanguage(sync.programmingLanguage)
+          setHintsGiven(sync.hintsGiven)
+          setShowCodeEditor(sync.showCodeEditor)
+          // Restore conversation history
+          const restored = sync.messages.map((m, i) => ({
+            id: `recovered-${i}-${Date.now()}`,
+            role: m.role as 'AI' | 'CANDIDATE',
+            content: m.content,
+            isStreaming: false,
+            timestamp: new Date(),
+          }))
+          replaceAll(restored)
+          break
+        }
+
         case 'ERROR': {
           const err = msg as WsErrorMessage
           console.error(`[WS Error] ${err.code}: ${err.message}`)
+          // Handle session-level errors — redirect if session is gone
+          if (err.code === 'SESSION_COMPLETED' || err.code === 'SESSION_EXPIRED' || err.code === 'SESSION_NOT_FOUND') {
+            navigate('/dashboard')
+          }
           break
         }
 
@@ -170,7 +196,7 @@ export default function InterviewPage() {
           break
       }
     },
-    [finalizeAiMessage, appendAiToken, addAiMessage, navigate, sessionId]
+    [finalizeAiMessage, appendAiToken, addAiMessage, replaceAll, navigate, sessionId]
   )
 
   const { send, status } = useInterviewSocket({

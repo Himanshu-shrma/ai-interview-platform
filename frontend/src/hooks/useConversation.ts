@@ -67,5 +67,10 @@ export function useConversation() {
     ])
   }, [])
 
-  return { messages, addCandidateMessage, startAiMessage, appendAiToken, finalizeAiMessage, addAiMessage }
+  /** Replace all messages at once — used for session recovery after reconnect. */
+  const replaceAll = useCallback((msgs: ConversationMessage[]) => {
+    setMessages(msgs)
+  }, [])
+
+  return { messages, addCandidateMessage, startAiMessage, appendAiToken, finalizeAiMessage, addAiMessage, replaceAll }
 }

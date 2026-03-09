@@ -50,6 +50,7 @@ data class TestResult(
     JsonSubTypes.Type(value = OutboundMessage.QuestionTransition::class, name = "QUESTION_TRANSITION"),
     JsonSubTypes.Type(value = OutboundMessage.InterviewEnded::class,    name = "INTERVIEW_ENDED"),
     JsonSubTypes.Type(value = OutboundMessage.SessionEnd::class,        name = "SESSION_END"),
+    JsonSubTypes.Type(value = OutboundMessage.StateSync::class,        name = "STATE_SYNC"),
     JsonSubTypes.Type(value = OutboundMessage.Error::class,             name = "ERROR"),
     JsonSubTypes.Type(value = OutboundMessage.Pong::class,              name = "PONG"),
 )
@@ -75,6 +76,30 @@ sealed class OutboundMessage {
     data class InterviewEnded(val reason: String, val overallScore: Double) : OutboundMessage()
     /** Sent when evaluation report is ready — carries reportId for redirect. */
     data class SessionEnd(val reportId: UUID) : OutboundMessage()
+    /** Sent on WS reconnect — full state recovery for the frontend. */
+    data class StateSync(
+        val state: String,
+        val currentQuestionIndex: Int,
+        val totalQuestions: Int,
+        val currentQuestion: QuestionSnapshot?,
+        val currentCode: String?,
+        val programmingLanguage: String?,
+        val hintsGiven: Int,
+        val messages: List<MessageSnapshot>,
+        val showCodeEditor: Boolean,
+    ) : OutboundMessage()
     data class Error(val code: String, val message: String) : OutboundMessage()
     class Pong : OutboundMessage()
 }
+
+/** Lightweight question snapshot for STATE_SYNC. */
+data class QuestionSnapshot(
+    val title: String,
+    val description: String,
+)
+
+/** Lightweight message snapshot for STATE_SYNC. */
+data class MessageSnapshot(
+    val role: String,
+    val content: String,
+)

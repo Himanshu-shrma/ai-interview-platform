@@ -17,4 +17,5 @@ data class InterviewSession(
     val endedAt: OffsetDateTime? = null,
     val durationSecs: Int? = null,
     val createdAt: OffsetDateTime? = null,
+    val lastHeartbeat: OffsetDateTime? = null,
 )

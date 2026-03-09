@@ -4,19 +4,26 @@ import com.aiinterview.code.service.CodeExecutionService
 import com.aiinterview.conversation.ConversationEngine
 import com.aiinterview.conversation.HintGenerator
 import com.aiinterview.conversation.InterviewState
+import com.aiinterview.interview.repository.ConversationMessageRepository
+import com.aiinterview.interview.repository.InterviewSessionRepository
 import com.aiinterview.interview.service.RedisMemoryService
+import com.aiinterview.report.repository.EvaluationReportRepository
 import com.fasterxml.jackson.databind.ObjectMapper
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.reactor.awaitSingle
+import kotlinx.coroutines.reactor.awaitSingleOrNull
 import kotlinx.coroutines.reactor.mono
+import kotlinx.coroutines.withContext
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Component
 import org.springframework.web.reactive.socket.WebSocketHandler
 import org.springframework.web.reactive.socket.WebSocketSession
 import reactor.core.publisher.Mono
+import java.time.OffsetDateTime
 import java.util.UUID
 
 @Component
@@ -27,6 +34,9 @@ class InterviewWebSocketHandler(
     private val hintGenerator: HintGenerator,
     private val codeExecutionService: CodeExecutionService,
     private val objectMapper: ObjectMapper,
+    private val conversationMessageRepository: ConversationMessageRepository,
+    private val interviewSessionRepository: InterviewSessionRepository,
+    private val evaluationReportRepository: EvaluationReportRepository,
 ) : WebSocketHandler {
 
     /** Fire-and-forget scope for code execution (same pattern as ConversationEngine). */
@@ -89,6 +99,31 @@ class InterviewWebSocketHandler(
     // ── Connect / Reconnect ───────────────────────────────────────────────────
 
     private suspend fun onConnect(sessionId: UUID, userId: UUID) {
+        // Check DB first — handles completed/abandoned sessions even if Redis expired
+        val dbSession = withContext(Dispatchers.IO) {
+            interviewSessionRepository.findById(sessionId).awaitSingleOrNull()
+        }
+
+        // Edge case: session already completed → redirect to report
+        if (dbSession?.status == "COMPLETED") {
+            val report = withContext(Dispatchers.IO) {
+                evaluationReportRepository.findBySessionId(sessionId).awaitSingleOrNull()
+            }
+            if (report?.id != null) {
+                registry.sendMessage(sessionId, OutboundMessage.SessionEnd(reportId = report.id))
+            } else {
+                registry.sendMessage(sessionId, OutboundMessage.Error("SESSION_COMPLETED", "Interview already completed"))
+            }
+            log.info("WS connect to completed session: sessionId={}", sessionId)
+            return
+        }
+
+        // Edge case: session abandoned or expired
+        if (dbSession?.status == "ABANDONED" || dbSession?.status == "EXPIRED") {
+            registry.sendMessage(sessionId, OutboundMessage.Error("SESSION_EXPIRED", "This session has expired. Please start a new interview."))
+            log.info("WS connect to {}: sessionId={}", dbSession.status, sessionId)
+            return
+        }
 
         val memoryExists = redisMemoryService.memoryExists(sessionId)
         if (memoryExists) {
@@ -102,15 +137,59 @@ class InterviewWebSocketHandler(
                 log.info("WS first connect: sessionId={}, userId={}", sessionId, userId)
                 conversationEngine.startInterview(sessionId)
             } else {
-                // Reconnect — resume from current state
-                registry.sendMessage(sessionId, OutboundMessage.StateChange(state = memory.state))
-                log.info("WS reconnected: sessionId={}, userId={}, state={}", sessionId, userId, memory.state)
+                // Reconnect — send full STATE_SYNC with conversation history
+                handleReconnect(sessionId, memory)
             }
+        } else if (dbSession != null && dbSession.status == "ACTIVE") {
+            // Redis expired but DB says ACTIVE — mark as abandoned
+            withContext(Dispatchers.IO) {
+                interviewSessionRepository.save(dbSession.copy(status = "ABANDONED")).awaitSingle()
+            }
+            registry.sendMessage(sessionId, OutboundMessage.Error("SESSION_EXPIRED", "Session memory expired. Please start a new interview."))
+            log.warn("Redis memory expired for active session {}; marked abandoned", sessionId)
         } else {
-            // Memory not found — session expired or invalid
             registry.sendMessage(sessionId, OutboundMessage.Error("SESSION_NOT_FOUND", "Session not found or expired"))
             log.warn("WS connect with no memory: sessionId={}", sessionId)
         }
+    }
+
+    /**
+     * Sends STATE_SYNC with full interview state on WS reconnect.
+     * Loads conversation history from DB + current state from Redis.
+     */
+    private suspend fun handleReconnect(sessionId: UUID, memory: com.aiinterview.interview.service.InterviewMemory) {
+        // Load recent messages from DB (reversed to chronological order)
+        val recentMessages = try {
+            withContext(Dispatchers.IO) {
+                conversationMessageRepository.findRecentBySessionId(sessionId, 50)
+                    .collectList().awaitSingle()
+            }.reversed()
+        } catch (e: Exception) {
+            log.warn("Failed to load messages for reconnect session {}: {}", sessionId, e.message)
+            emptyList()
+        }
+
+        val codingStates = setOf(
+            InterviewState.toString(InterviewState.CodingChallenge),
+            "CODING_CHALLENGE",
+        )
+
+        val stateSync = OutboundMessage.StateSync(
+            state                = memory.state,
+            currentQuestionIndex = memory.currentQuestionIndex,
+            totalQuestions       = memory.totalQuestions,
+            currentQuestion      = memory.currentQuestion?.let {
+                QuestionSnapshot(title = it.title, description = it.description)
+            },
+            currentCode          = memory.currentCode,
+            programmingLanguage  = memory.programmingLanguage,
+            hintsGiven           = memory.hintsGiven,
+            messages             = recentMessages.map { MessageSnapshot(role = it.role, content = it.content) },
+            showCodeEditor       = memory.state in codingStates || !memory.currentCode.isNullOrBlank(),
+        )
+
+        registry.sendMessage(sessionId, stateSync)
+        log.info("WS reconnected with STATE_SYNC: sessionId={}, state={}, messages={}", sessionId, memory.state, recentMessages.size)
     }
 
     // ── Message Routing ───────────────────────────────────────────────────────
@@ -126,7 +205,20 @@ class InterviewWebSocketHandler(
 
         val type = tree.get("type")?.asText()
         when (type) {
-            "PING" -> registry.sendMessage(sessionId, OutboundMessage.Pong())
+            "PING" -> {
+                registry.sendMessage(sessionId, OutboundMessage.Pong())
+                // Persist heartbeat to DB for abandoned session detection
+                codeScope.launch {
+                    try {
+                        val session = interviewSessionRepository.findById(sessionId).awaitSingleOrNull()
+                        if (session != null && session.status == "ACTIVE") {
+                            interviewSessionRepository.save(session.copy(lastHeartbeat = OffsetDateTime.now())).awaitSingle()
+                        }
+                    } catch (e: Exception) {
+                        log.debug("Heartbeat persist failed for session {}: {}", sessionId, e.message)
+                    }
+                }
+            }
 
             "CANDIDATE_MESSAGE" -> {
                 val msg = objectMapper.treeToValue(tree, InboundMessage.CandidateMessage::class.java)

@@ -186,6 +186,7 @@ export type WsOutboundType =
   | 'QUESTION_TRANSITION'
   | 'INTERVIEW_ENDED'
   | 'SESSION_END'
+  | 'STATE_SYNC'
   | 'ERROR'
   | 'PONG'
 
@@ -251,6 +252,19 @@ export interface QuestionTransitionMessage extends WsOutboundMessage {
 export interface SessionEndMessage extends WsOutboundMessage {
   type: 'SESSION_END'
   reportId: string
+}
+
+export interface StateSyncMessage extends WsOutboundMessage {
+  type: 'STATE_SYNC'
+  state: string
+  currentQuestionIndex: number
+  totalQuestions: number
+  currentQuestion: { title: string; description: string } | null
+  currentCode: string | null
+  programmingLanguage: string | null
+  hintsGiven: number
+  messages: { role: string; content: string }[]
+  showCodeEditor: boolean
 }
 
 export interface WsErrorMessage extends WsOutboundMessage {
