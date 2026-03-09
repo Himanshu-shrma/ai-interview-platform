@@ -54,11 +54,20 @@ class Judge0TimeoutException(token: String) :
 class Judge0Client(
     webClientBuilder: WebClient.Builder,
     @Value("\${judge0.base-url:http://localhost:2358}")        baseUrl: String,
+    @Value("\${judge0.auth-token:}")              private val authToken: String,
+    @Value("\${judge0.auth-header:X-Auth-Token}") private val authHeader: String,
     @Value("\${judge0.poll-interval-ms:500}")    private val pollIntervalMs: Long,
     @Value("\${judge0.poll-timeout-seconds:30}") private val pollTimeoutSecs: Long,
 ) {
     private val log       = LoggerFactory.getLogger(Judge0Client::class.java)
-    private val webClient = webClientBuilder.baseUrl(baseUrl).build()
+    private val webClient = webClientBuilder
+        .baseUrl(baseUrl)
+        .apply {
+            if (authToken.isNotBlank()) {
+                it.defaultHeader(authHeader, authToken)
+            }
+        }
+        .build()
 
     /**
      * Submits code to Judge0 asynchronously and returns the submission token.
