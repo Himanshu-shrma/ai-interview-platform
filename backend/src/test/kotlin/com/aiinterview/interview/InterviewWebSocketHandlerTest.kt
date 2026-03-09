@@ -3,6 +3,8 @@ package com.aiinterview.interview
 import com.aiinterview.code.service.CodeExecutionService
 import com.aiinterview.conversation.ConversationEngine
 import com.aiinterview.conversation.HintGenerator
+import com.aiinterview.interview.repository.ConversationMessageRepository
+import com.aiinterview.interview.repository.InterviewSessionRepository
 import com.aiinterview.interview.service.InterviewMemory
 import com.aiinterview.interview.service.RedisMemoryService
 import com.aiinterview.interview.ws.ATTR_SESSION_ID
@@ -10,6 +12,7 @@ import com.aiinterview.interview.ws.ATTR_USER_ID
 import com.aiinterview.interview.ws.InterviewWebSocketHandler
 import com.aiinterview.interview.ws.OutboundMessage
 import com.aiinterview.interview.ws.WsSessionRegistry
+import com.aiinterview.report.repository.EvaluationReportRepository
 import com.fasterxml.jackson.databind.DeserializationFeature
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.databind.SerializationFeature
@@ -36,12 +39,15 @@ class InterviewWebSocketHandlerTest {
         configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false)
     }
 
-    private val registry              = mockk<WsSessionRegistry>(relaxed = true)
-    private val memoryService         = mockk<RedisMemoryService>()
-    private val conversationEngine    = mockk<ConversationEngine>(relaxed = true)
-    private val hintGenerator         = mockk<HintGenerator>(relaxed = true)
-    private val codeExecutionService  = mockk<CodeExecutionService>(relaxed = true)
-    private val handler               = InterviewWebSocketHandler(registry, memoryService, conversationEngine, hintGenerator, codeExecutionService, objectMapper)
+    private val registry                    = mockk<WsSessionRegistry>(relaxed = true)
+    private val memoryService               = mockk<RedisMemoryService>()
+    private val conversationEngine          = mockk<ConversationEngine>(relaxed = true)
+    private val hintGenerator               = mockk<HintGenerator>(relaxed = true)
+    private val codeExecutionService        = mockk<CodeExecutionService>(relaxed = true)
+    private val conversationMessageRepo     = mockk<ConversationMessageRepository>(relaxed = true)
+    private val interviewSessionRepo        = mockk<InterviewSessionRepository>(relaxed = true)
+    private val evaluationReportRepo        = mockk<EvaluationReportRepository>(relaxed = true)
+    private val handler                     = InterviewWebSocketHandler(registry, memoryService, conversationEngine, hintGenerator, codeExecutionService, objectMapper, conversationMessageRepo, interviewSessionRepo, evaluationReportRepo)
 
     private val sessionId = UUID.randomUUID()
     private val userId    = UUID.randomUUID()
