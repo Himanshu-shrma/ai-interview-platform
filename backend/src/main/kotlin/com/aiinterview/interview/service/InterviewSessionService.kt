@@ -43,7 +43,7 @@ class InterviewSessionService(
     suspend fun startSession(user: User, config: InterviewConfig): StartSessionResponse {
         val userId = requireNotNull(user.id) { "User has null id" }
 
-        val allowed = usageLimitService.checkAndIncrementUsage(userId, user.subscriptionTier)
+        val allowed = usageLimitService.checkUsageAllowed(userId, user.subscriptionTier)
         if (!allowed) throw UsageLimitExceededException("Monthly interview limit reached for plan ${user.subscriptionTier}")
 
         val configJson = objectMapper.writeValueAsString(config)
@@ -158,10 +158,12 @@ class InterviewSessionService(
             .collectList()
             .awaitSingle()
 
+        // Batch-load all user reports to avoid N+1 queries (1 query instead of N)
+        val reportMap = evaluationReportRepository.findByUserId(userId)
+            .collectList().awaitSingle()
+            .associateBy { it.sessionId }
+
         val summaries = sessions.map { session ->
-            val report = evaluationReportRepository
-                .findBySessionId(requireNotNull(session.id))
-                .awaitSingleOrNull()
             val config = runCatching {
                 objectMapper.readValue(session.config, InterviewConfig::class.java)
             }.getOrElse { InterviewConfig(category = com.aiinterview.shared.domain.InterviewCategory.CODING) }
@@ -175,7 +177,7 @@ class InterviewSessionService(
                 createdAt    = session.createdAt,
                 endedAt      = session.endedAt,
                 durationSecs = session.durationSecs,
-                overallScore = report?.overallScore,
+                overallScore = reportMap[session.id]?.overallScore,
             )
         }
 

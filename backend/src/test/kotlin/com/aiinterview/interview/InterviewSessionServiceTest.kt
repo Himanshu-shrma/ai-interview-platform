@@ -101,7 +101,7 @@ class InterviewSessionServiceTest {
         val savedSession = makeSession()
         val question = makeQuestion()
 
-        coEvery { usageLimitService.checkAndIncrementUsage(userId, "FREE") } returns true
+        coEvery { usageLimitService.checkUsageAllowed(userId, "FREE") } returns true
         coEvery { sessionRepository.save(any()) } returns Mono.just(savedSession)
         coEvery { questionService.selectQuestionsForSession(any(), any()) } returns listOf(question, question)
         coEvery { sessionQuestionRepo.save(any()) } returns Mono.just(
@@ -118,7 +118,7 @@ class InterviewSessionServiceTest {
 
     @Test
     fun `startSession throws UsageLimitExceededException when limit reached`() = runTest {
-        coEvery { usageLimitService.checkAndIncrementUsage(userId, "FREE") } returns false
+        coEvery { usageLimitService.checkUsageAllowed(userId, "FREE") } returns false
 
         assertThrows<UsageLimitExceededException> {
             service.startSession(freeUser, defaultConfig)
@@ -215,7 +215,7 @@ class InterviewSessionServiceTest {
 
         coEvery { sessionRepository.countByUserId(userId) } returns Mono.just(2L)
         coEvery { sessionRepository.findByUserIdOrderByCreatedAtDesc(userId) } returns Flux.just(session1, session2)
-        coEvery { evaluationReportRepo.findBySessionId(any()) } returns Mono.empty()
+        coEvery { evaluationReportRepo.findByUserId(userId) } returns Flux.empty()
 
         val result = service.listSessions(userId, page = 0, size = 20)
 

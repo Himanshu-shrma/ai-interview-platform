@@ -211,14 +211,18 @@ class ReportService(
                 .awaitSingle()
         }
 
+        // Batch-load all sessions to avoid N+1 queries
+        val sessionIds = reports.map { it.sessionId }
+        val sessionMap = if (sessionIds.isNotEmpty()) {
+            withContext(Dispatchers.IO) {
+                interviewSessionRepository.findAllById(sessionIds)
+                    .collectList().awaitSingle()
+            }.associateBy { it.id }
+        } else emptyMap()
+
         return reports.mapNotNull { report ->
             val reportId = report.id ?: return@mapNotNull null
-            val session = report.sessionId.let { sid ->
-                withContext(Dispatchers.IO) {
-                    interviewSessionRepository.findById(sid).awaitSingleOrNull()
-                }
-            }
-            val config = session?.config?.let { parseConfig(it) }
+            val config = sessionMap[report.sessionId]?.config?.let { parseConfig(it) }
             ReportSummaryDto(
                 reportId     = reportId,
                 sessionId    = report.sessionId,

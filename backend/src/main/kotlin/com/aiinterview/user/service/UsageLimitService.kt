@@ -35,7 +35,7 @@ class UsageLimitService(
      * via [incrementUsage], so abandoned sessions do not consume quota.
      * Returns false (no side effects) when the FREE tier limit is reached.
      */
-    suspend fun checkAndIncrementUsage(userId: UUID, plan: String): Boolean {
+    suspend fun checkUsageAllowed(userId: UUID, plan: String): Boolean {
         if (plan.uppercase() == "PRO") return true
         val current = redisTemplate.opsForValue().get(usageKey(userId)).awaitSingleOrNull()?.toIntOrNull() ?: 0
         return current < freeTierLimit

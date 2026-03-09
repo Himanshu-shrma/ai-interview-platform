@@ -13,4 +13,15 @@ export default defineConfig({
   server: {
     port: 3000,
   },
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          'monaco': ['@monaco-editor/react', 'monaco-editor'],
+          'recharts': ['recharts'],
+          'clerk': ['@clerk/clerk-react'],
+        },
+      },
+    },
+  },
 })

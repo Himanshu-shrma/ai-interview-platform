@@ -1,10 +1,10 @@
-import { useCallback, useRef, useState } from 'react'
+import { lazy, Suspense, useCallback, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useInterviewDetail } from '@/hooks/useInterviews'
 import { useInterviewSocket } from '@/hooks/useInterviewSocket'
 import { useConversation } from '@/hooks/useConversation'
 import { ConversationPanel } from '@/components/interview/ConversationPanel'
-import { CodeEditor } from '@/components/interview/CodeEditor'
+const CodeEditor = lazy(() => import('@/components/interview/CodeEditor').then(m => ({ default: m.CodeEditor })))
 import { TestResults } from '@/components/interview/TestResults'
 import { TimerDisplay } from '@/components/interview/TimerDisplay'
 import { HintPanel } from '@/components/interview/HintPanel'
@@ -327,14 +327,16 @@ export default function InterviewPage() {
         {showCodeEditor && (
           <div className="flex flex-1 flex-col min-w-0">
             <div className="flex-1 min-h-0">
-              <CodeEditor
-                code={currentCode}
-                language={currentLanguage}
-                onCodeChange={setCurrentCode}
-                onRun={handleCodeRun}
-                onSubmit={handleCodeSubmit}
-                isRunning={isCodeRunning}
-              />
+              <Suspense fallback={<div className="flex items-center justify-center h-full text-muted-foreground">Loading editor...</div>}>
+                <CodeEditor
+                  code={currentCode}
+                  language={currentLanguage}
+                  onCodeChange={setCurrentCode}
+                  onRun={handleCodeRun}
+                  onSubmit={handleCodeSubmit}
+                  isRunning={isCodeRunning}
+                />
+              </Suspense>
             </div>
             {(codeResult || isCodeRunning) && (
               <div className="border-t max-h-[30%] overflow-y-auto">
