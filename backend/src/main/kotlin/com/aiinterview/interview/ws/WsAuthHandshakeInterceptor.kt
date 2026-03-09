@@ -14,6 +14,7 @@ import org.springframework.web.server.WebFilter
 import org.springframework.web.server.WebFilterChain
 import reactor.core.publisher.Mono
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
 
 // Keys stored in WebSocket session attributes (set in exchange, carried into WebSocketSession)
 const val ATTR_USER_ID    = "userId"
@@ -27,6 +28,9 @@ private const val WS_PATH_PREFIX = "/ws/"
  *
  * Reads ?token= query param, validates JWT, checks session ownership, then stores
  * userId and sessionId as exchange attributes so they are available in WebSocketSession.attributes.
+ *
+ * Also stores the mapping in a companion cache so [InterviewWebSocketHandler] can
+ * look up userId even if exchange attribute propagation to WebSocketSession fails.
  */
 @Component
 @Order(-100)
@@ -37,6 +41,14 @@ class WsAuthHandshakeInterceptor(
 ) : WebFilter {
 
     private val log = LoggerFactory.getLogger(WsAuthHandshakeInterceptor::class.java)
+
+    companion object {
+        /** sessionId → userId cache, populated during auth, consumed by the WS handler. */
+        private val authCache = ConcurrentHashMap<UUID, UUID>()
+
+        fun getAuthenticatedUserId(sessionId: UUID): UUID? = authCache[sessionId]
+        fun removeAuthenticatedSession(sessionId: UUID) { authCache.remove(sessionId) }
+    }
 
     override fun filter(exchange: ServerWebExchange, chain: WebFilterChain): Mono<Void> {
         val path = exchange.request.path.pathWithinApplication().value()
@@ -102,6 +114,8 @@ class WsAuthHandshakeInterceptor(
         // 6. Stash resolved values; WebSocketSession.attributes inherits from exchange.attributes
         exchange.attributes[ATTR_USER_ID]    = internalUserId
         exchange.attributes[ATTR_SESSION_ID] = sessionId
+        // Also store in companion cache as fallback for attribute propagation issues
+        authCache[sessionId] = internalUserId
         log.debug("WS upgrade allowed: sessionId={}, userId={}", sessionId, internalUserId)
         return true
     }

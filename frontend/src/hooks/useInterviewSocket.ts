@@ -22,108 +22,143 @@ export function useInterviewSocket({
 }: UseInterviewSocketOptions) {
   const { getToken } = useAuth()
   const wsRef = useRef<WebSocket | null>(null)
-  const retryCountRef = useRef(0)
-  const heartbeatRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const queueRef = useRef<WsInboundMessage[]>([])
   const [status, setStatus] = useState<ConnectionStatus>('disconnected')
 
-  const updateStatus = useCallback(
-    (s: ConnectionStatus) => {
+  // Stable refs for callbacks — prevents effect re-runs when parent
+  // re-renders with new callback references.
+  const onMessageRef = useRef(onMessage)
+  onMessageRef.current = onMessage
+  const onStatusChangeRef = useRef(onStatusChange)
+  onStatusChangeRef.current = onStatusChange
+  const getTokenRef = useRef(getToken)
+  getTokenRef.current = getToken
+
+  // Single effect manages the entire WS lifecycle for a given sessionId.
+  // Uses a LOCAL `cancelled` flag (not a ref) so each effect invocation
+  // has its own closure — critical for React StrictMode double-mount.
+  useEffect(() => {
+    let cancelled = false
+    let retryCount = 0
+    let heartbeatId: ReturnType<typeof setInterval> | null = null
+    let retryTimeoutId: ReturnType<typeof setTimeout> | null = null
+
+    function updateSt(s: ConnectionStatus) {
+      if (cancelled) return
       setStatus(s)
-      onStatusChange?.(s)
-    },
-    [onStatusChange]
-  )
-
-  const clearHeartbeat = useCallback(() => {
-    if (heartbeatRef.current) {
-      clearInterval(heartbeatRef.current)
-      heartbeatRef.current = null
-    }
-  }, [])
-
-  const connect = useCallback(async () => {
-    if (wsRef.current?.readyState === WebSocket.OPEN) return
-
-    updateStatus('connecting')
-
-    const token = await getToken()
-    if (!token) {
-      updateStatus('error')
-      return
+      onStatusChangeRef.current?.(s)
     }
 
-    const ws = new WebSocket(`${WS_BASE_URL}/ws/interview/${sessionId}?token=${token}`)
-    wsRef.current = ws
+    function clearHb() {
+      if (heartbeatId) {
+        clearInterval(heartbeatId)
+        heartbeatId = null
+      }
+    }
 
-    ws.onopen = () => {
-      retryCountRef.current = 0
-      updateStatus('connected')
+    async function connect() {
+      if (cancelled) return
 
-      // Flush queued messages
-      while (queueRef.current.length > 0) {
-        const queued = queueRef.current.shift()!
-        ws.send(JSON.stringify(queued))
+      // If there's already an open socket from a previous connect() in this
+      // same effect invocation, don't open another one.
+      if (wsRef.current?.readyState === WebSocket.OPEN) return
+
+      updateSt('connecting')
+
+      const token = await getTokenRef.current()
+      // Re-check after async gap — cleanup may have run while awaiting token
+      if (!token || cancelled) {
+        if (!cancelled) updateSt('error')
+        return
       }
 
-      // Start heartbeat
-      clearHeartbeat()
-      heartbeatRef.current = setInterval(() => {
-        if (ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({ type: 'PING' }))
+      const ws = new WebSocket(`${WS_BASE_URL}/ws/interview/${sessionId}?token=${token}`)
+      wsRef.current = ws
+
+      ws.onopen = () => {
+        if (cancelled) { ws.close(); return }
+        retryCount = 0
+        updateSt('connected')
+
+        // Flush queued messages
+        while (queueRef.current.length > 0) {
+          const queued = queueRef.current.shift()!
+          ws.send(JSON.stringify(queued))
         }
-      }, HEARTBEAT_INTERVAL)
-    }
 
-    ws.onmessage = (event) => {
-      try {
-        const msg = JSON.parse(event.data) as WsOutboundMessage
-        onMessage(msg)
-      } catch {
-        // ignore malformed messages
+        // Start heartbeat
+        clearHb()
+        heartbeatId = setInterval(() => {
+          if (ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: 'PING' }))
+          }
+        }, HEARTBEAT_INTERVAL)
+      }
+
+      ws.onmessage = (event) => {
+        try {
+          const msg = JSON.parse(event.data) as WsOutboundMessage
+          onMessageRef.current(msg)
+        } catch {
+          // ignore malformed messages
+        }
+      }
+
+      ws.onclose = () => {
+        clearHb()
+        if (cancelled) return
+
+        if (retryCount < MAX_RETRIES) {
+          const delay = BACKOFF_MS[retryCount] ?? BACKOFF_MS[BACKOFF_MS.length - 1]
+          retryCount++
+          updateSt('connecting')
+          retryTimeoutId = setTimeout(() => connect(), delay)
+        } else {
+          updateSt('disconnected')
+        }
+      }
+
+      ws.onerror = () => {
+        if (cancelled) return
+        updateSt('error')
+        ws.close()
       }
     }
 
-    ws.onclose = () => {
-      clearHeartbeat()
+    connect()
 
-      if (retryCountRef.current < MAX_RETRIES) {
-        const delay = BACKOFF_MS[retryCountRef.current] ?? BACKOFF_MS[BACKOFF_MS.length - 1]
-        retryCountRef.current++
-        updateStatus('connecting')
-        setTimeout(() => connect(), delay)
-      } else {
-        updateStatus('disconnected')
+    return () => {
+      cancelled = true
+      clearHb()
+      if (retryTimeoutId) clearTimeout(retryTimeoutId)
+      if (wsRef.current) {
+        wsRef.current.onclose = null // prevent retry from firing during cleanup
+        wsRef.current.close()
+        wsRef.current = null
       }
+      setStatus('disconnected')
     }
-
-    ws.onerror = () => {
-      updateStatus('error')
-      ws.close()
-    }
-  }, [sessionId, getToken, onMessage, updateStatus, clearHeartbeat])
+  }, [sessionId]) // eslint-disable-line react-hooks/exhaustive-deps
+  // sessionId is the only real dependency — callbacks accessed via refs
 
   const send = useCallback((msg: WsInboundMessage) => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify(msg))
     } else {
-      // Queue messages during reconnect
       queueRef.current.push(msg)
     }
   }, [])
 
   const disconnect = useCallback(() => {
-    retryCountRef.current = MAX_RETRIES // prevent auto-reconnect
-    clearHeartbeat()
-    wsRef.current?.close()
-    wsRef.current = null
-    updateStatus('disconnected')
-  }, [clearHeartbeat, updateStatus])
-
-  useEffect(() => {
-    connect()
-    return () => disconnect()
-  }, [connect, disconnect])
+    // Close the current connection; the effect cleanup handles the rest
+    // when the component unmounts or sessionId changes.
+    if (wsRef.current) {
+      wsRef.current.onclose = null
+      wsRef.current.close()
+      wsRef.current = null
+    }
+    setStatus('disconnected')
+  }, [])
 
   return { status, send, disconnect }
 }

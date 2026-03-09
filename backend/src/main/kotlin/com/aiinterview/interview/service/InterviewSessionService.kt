@@ -5,11 +5,13 @@ import com.aiinterview.interview.dto.SessionDetailDto
 import com.aiinterview.interview.dto.SessionSummaryDto
 import com.aiinterview.interview.dto.StartSessionResponse
 import com.aiinterview.interview.dto.toCandidateDto
+import com.aiinterview.interview.dto.toInternalDto
 import com.aiinterview.interview.model.InterviewSession
 import com.aiinterview.interview.model.SessionQuestion
 import com.aiinterview.interview.repository.InterviewSessionRepository
 import com.aiinterview.interview.repository.SessionQuestionRepository
 import com.aiinterview.report.repository.EvaluationReportRepository
+import com.aiinterview.shared.domain.InterviewCategory
 import com.aiinterview.user.model.User
 import com.aiinterview.user.service.UsageLimitService
 import com.fasterxml.jackson.databind.ObjectMapper
@@ -32,6 +34,7 @@ class InterviewSessionService(
     private val questionService: QuestionService,
     private val evaluationReportRepository: EvaluationReportRepository,
     private val usageLimitService: UsageLimitService,
+    private val redisMemoryService: RedisMemoryService,
     private val objectMapper: ObjectMapper,
     @Value("\${app.websocket.base-url:ws://localhost:8080}") private val wsBaseUrl: String,
 ) {
@@ -56,7 +59,8 @@ class InterviewSessionService(
 
         val sessionId = requireNotNull(session.id) { "Session save returned null id" }
 
-        val questions = questionService.selectQuestionsForSession(config, count = 1)
+        val questionCount = questionsPerCategory(config.category)
+        val questions = questionService.selectQuestionsForSession(config, count = questionCount)
         questions.forEachIndexed { index, question ->
             val questionId = requireNotNull(question.id) { "Question has null id" }
             sessionQuestionRepository.save(
@@ -67,6 +71,10 @@ class InterviewSessionService(
                 )
             ).awaitSingle()
         }
+
+        // Initialize Redis memory so the WS handler can start the interview
+        val firstQuestion = questions.first().toInternalDto(objectMapper)
+        redisMemoryService.initMemory(sessionId, userId, config, firstQuestion, totalQuestions = questions.size)
 
         log.info("Started session {} for user {} (category={}, difficulty={})",
             sessionId, userId, config.category, config.difficulty)
@@ -177,5 +185,13 @@ class InterviewSessionService(
             size    = size,
             total   = total,
         )
+    }
+
+    private fun questionsPerCategory(category: InterviewCategory): Int = when (category) {
+        InterviewCategory.CODING        -> 2
+        InterviewCategory.DSA           -> 2
+        InterviewCategory.BEHAVIORAL    -> 3
+        InterviewCategory.SYSTEM_DESIGN -> 1
+        InterviewCategory.CASE_STUDY    -> 1
     }
 }

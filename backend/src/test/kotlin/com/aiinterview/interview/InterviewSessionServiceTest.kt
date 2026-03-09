@@ -15,6 +15,7 @@ import com.aiinterview.report.repository.EvaluationReportRepository
 import com.aiinterview.shared.domain.Difficulty
 import com.aiinterview.shared.domain.InterviewCategory
 import com.aiinterview.user.model.User
+import com.aiinterview.interview.service.RedisMemoryService
 import com.aiinterview.user.service.UsageLimitService
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import io.mockk.coEvery
@@ -38,6 +39,7 @@ class InterviewSessionServiceTest {
     private val questionService       = mockk<QuestionService>()
     private val evaluationReportRepo  = mockk<EvaluationReportRepository>()
     private val usageLimitService     = mockk<UsageLimitService>()
+    private val redisMemoryService   = mockk<RedisMemoryService>(relaxed = true)
     private val objectMapper          = jacksonObjectMapper()
 
     private val service = InterviewSessionService(
@@ -46,6 +48,7 @@ class InterviewSessionServiceTest {
         questionService            = questionService,
         evaluationReportRepository = evaluationReportRepo,
         usageLimitService          = usageLimitService,
+        redisMemoryService         = redisMemoryService,
         objectMapper               = objectMapper,
         wsBaseUrl                  = "ws://localhost:8080",
     )
@@ -100,7 +103,7 @@ class InterviewSessionServiceTest {
 
         coEvery { usageLimitService.checkAndIncrementUsage(userId, "FREE") } returns true
         coEvery { sessionRepository.save(any()) } returns Mono.just(savedSession)
-        coEvery { questionService.selectQuestionsForSession(any(), 1) } returns listOf(question)
+        coEvery { questionService.selectQuestionsForSession(any(), any()) } returns listOf(question, question)
         coEvery { sessionQuestionRepo.save(any()) } returns Mono.just(
             SessionQuestion(sessionId = sessionId, questionId = questionId)
         )
@@ -110,7 +113,7 @@ class InterviewSessionServiceTest {
         assertEquals(sessionId, response.sessionId)
         assert(response.wsUrl.contains(sessionId.toString()))
         coVerify(exactly = 1) { sessionRepository.save(any()) }
-        coVerify(exactly = 1) { sessionQuestionRepo.save(any()) }
+        coVerify(exactly = 2) { sessionQuestionRepo.save(any()) }
     }
 
     @Test

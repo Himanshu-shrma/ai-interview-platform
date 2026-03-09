@@ -50,6 +50,6 @@ class CodeController(
 
     /** Returns the list of supported programming languages. No auth required. */
     @GetMapping("/languages")
-    fun getSupportedLanguages(): ResponseEntity<Map<String, Any>> =
+    suspend fun getSupportedLanguages(): ResponseEntity<Map<String, Any>> =
         ResponseEntity.ok(mapOf("languages" to LanguageMap.getSupportedLanguages()))
 }

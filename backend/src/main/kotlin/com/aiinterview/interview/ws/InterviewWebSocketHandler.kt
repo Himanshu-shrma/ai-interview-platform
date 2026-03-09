@@ -35,24 +35,60 @@ class InterviewWebSocketHandler(
     private val log = LoggerFactory.getLogger(InterviewWebSocketHandler::class.java)
 
     override fun handle(session: WebSocketSession): Mono<Void> {
-        val sessionId = session.attributes[ATTR_SESSION_ID] as? UUID ?: return session.close()
-        val userId    = session.attributes[ATTR_USER_ID]    as? UUID ?: return session.close()
+        // Primary: exchange attributes set by WsAuthHandshakeInterceptor.
+        // Fallback: extract sessionId from URI path + lookup userId from auth cache
+        // (exchange attribute propagation to WebSocketSession can fail in some configs).
+        val sessionId = session.attributes[ATTR_SESSION_ID] as? UUID
+            ?: extractSessionIdFromUri(session)
+            ?: run {
+                log.error("WS handle: no sessionId — attrs={}", session.attributes.keys)
+                return session.close()
+            }
+        val userId = session.attributes[ATTR_USER_ID] as? UUID
+            ?: WsAuthHandshakeInterceptor.getAuthenticatedUserId(sessionId)
+            ?: run {
+                log.error("WS handle: no userId for session={}", sessionId)
+                return session.close()
+            }
 
-        return mono { onConnect(sessionId, userId, session) }
-            .flatMap {
+        // Register and get the outbound Flux (backed by a Sinks.Many).
+        // Messages pushed via registry.sendMessage() flow through this single send() call,
+        // preventing ByteBuf refCnt issues from multiple session.send() calls.
+        val outboundFlux = registry.register(sessionId, session)
+
+        val outbound = session.send(
+            outboundFlux.map { json -> session.textMessage(json) }
+        )
+
+        val inbound = mono { onConnect(sessionId, userId) }
+            .thenMany(
                 session.receive()
                     .flatMap { wsMsg ->
-                        mono { handleMessage(sessionId, wsMsg.payloadAsText) }
+                        // Extract payload text BEFORE entering the coroutine.
+                        // The ByteBuf backing wsMsg is released after flatMap returns;
+                        // accessing payloadAsText inside mono{} causes refCnt: 0.
+                        val text = wsMsg.payloadAsText
+                        mono { handleMessage(sessionId, text) }
                     }
-                    .then()
-            }
+            )
+            .then()
+
+        return inbound.and(outbound)
+            .doOnError { e -> log.error("WS error for session {}: {}", sessionId, e.message) }
             .doFinally { onDisconnect(sessionId) }
+    }
+
+    /** Extract sessionId UUID from the WS URI path: /ws/interview/{sessionId} */
+    private fun extractSessionIdFromUri(session: WebSocketSession): UUID? {
+        val path = session.handshakeInfo.uri.path
+        val segments = path.split("/").filter { it.isNotBlank() }
+        val idStr = segments.lastOrNull() ?: return null
+        return try { UUID.fromString(idStr) } catch (_: IllegalArgumentException) { null }
     }
 
     // ── Connect / Reconnect ───────────────────────────────────────────────────
 
-    private suspend fun onConnect(sessionId: UUID, userId: UUID, session: WebSocketSession) {
-        registry.register(sessionId, session)
+    private suspend fun onConnect(sessionId: UUID, userId: UUID) {
 
         val memoryExists = redisMemoryService.memoryExists(sessionId)
         if (memoryExists) {
@@ -152,6 +188,7 @@ class InterviewWebSocketHandler(
 
     private fun onDisconnect(sessionId: UUID) {
         registry.deregister(sessionId)
+        WsAuthHandshakeInterceptor.removeAuthenticatedSession(sessionId)
         log.info("WS disconnected: sessionId={}", sessionId)
     }
 }

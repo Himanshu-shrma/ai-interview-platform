@@ -22,6 +22,14 @@ import org.springframework.stereotype.Component
 import java.util.UUID
 
 private const val STREAM_TIMEOUT_MS = 10_000L
+private const val MAX_TOKENS_FALLBACK = 200
+
+/** Dynamic maxTokens per message type — keeps responses appropriately short. */
+private fun maxTokensFor(messageType: MessageType): Int = when (messageType) {
+    MessageType.CONSTRAINT_QUESTION -> 80   // "Yes, up to 10^5 elements."
+    MessageType.CLARIFYING_QUESTION -> 100  // Short direct answer
+    MessageType.CANDIDATE_STATEMENT -> 150  // React + one follow-up
+}
 
 @Component
 class InterviewerAgent(
@@ -39,10 +47,12 @@ class InterviewerAgent(
         memory: InterviewMemory,
         userMessage: String,
     ) {
-        val systemPrompt = promptBuilder.buildSystemPrompt(memory)
+        val messageType = classifyMessage(userMessage)
+        val systemPrompt = promptBuilder.buildSystemPrompt(memory, messageType)
         val fullResponse = StringBuilder()
 
-        val success = tryStreaming(sessionId, systemPrompt, userMessage, fullResponse)
+        val maxTokens = maxTokensFor(messageType)
+        val success = tryStreaming(sessionId, systemPrompt, userMessage, fullResponse, maxTokens)
 
         if (!success) {
             log.warn("Streaming timed out or failed for session {}, falling back to complete()", sessionId)
@@ -58,6 +68,8 @@ class InterviewerAgent(
         val responseText = fullResponse.toString()
         if (responseText.isNotBlank()) {
             persistResponse(sessionId, responseText)
+            // Update interview stage based on AI response content
+            updateInterviewStage(sessionId, memory, userMessage, responseText)
         }
     }
 
@@ -66,6 +78,7 @@ class InterviewerAgent(
         systemPrompt: String,
         userMessage: String,
         fullResponse: StringBuilder,
+        maxTokens: Int = 150,
     ): Boolean = try {
         val request = LlmRequest(
             messages = listOf(
@@ -73,7 +86,7 @@ class InterviewerAgent(
                 LlmMessage(LlmRole.USER, userMessage),
             ),
             model = modelConfig.interviewerModel,
-            maxTokens = 800,
+            maxTokens = maxTokens,
         )
 
         withTimeout(STREAM_TIMEOUT_MS) {
@@ -105,7 +118,7 @@ class InterviewerAgent(
             systemPrompt = systemPrompt,
             userMessage = userMessage,
             model = modelConfig.backgroundModel,
-            maxTokens = 800,
+            maxTokens = MAX_TOKENS_FALLBACK,
         )
         val response = llm.complete(request)
         fullResponse.append(response.content)
@@ -114,6 +127,81 @@ class InterviewerAgent(
     } catch (e: Exception) {
         log.error("Fallback model error for session {}: {}", sessionId, e.message)
         false
+    }
+
+    /**
+     * Detects the interview stage from conversation content and updates Redis.
+     * Stages progress naturally: PROBLEM_PRESENTED → CLARIFICATION → APPROACH → CODING → CODE_REVIEW → COMPLEXITY → EDGE_CASES → WRAP_UP
+     */
+    private suspend fun updateInterviewStage(
+        sessionId: UUID,
+        memory: InterviewMemory,
+        candidateMessage: String,
+        aiResponse: String,
+    ) {
+        val currentStage = memory.interviewStage
+        val lower = candidateMessage.lowercase()
+        val aiLower = aiResponse.lowercase()
+
+        val newStage = when (currentStage) {
+            "PROBLEM_PRESENTED" -> {
+                if (lower.endsWith("?") || lower.contains("constraint") || lower.contains("clarif")) {
+                    "CLARIFICATION"
+                } else {
+                    "APPROACH_DISCUSSION"
+                }
+            }
+            "CLARIFICATION" -> {
+                if (!lower.endsWith("?") && (lower.contains("approach") || lower.contains("think") ||
+                            lower.contains("would") || lower.contains("use") || lower.contains("idea"))) {
+                    "APPROACH_DISCUSSION"
+                } else {
+                    currentStage // stay in clarification
+                }
+            }
+            "APPROACH_DISCUSSION" -> {
+                if (memory.currentCode != null || aiLower.contains("code it") || aiLower.contains("go ahead")) {
+                    "CODING"
+                } else {
+                    currentStage
+                }
+            }
+            "CODING" -> {
+                if (memory.currentCode != null && lower.length > 20) {
+                    "CODE_REVIEW"
+                } else {
+                    currentStage
+                }
+            }
+            "CODE_REVIEW" -> {
+                if (lower.contains("o(") || lower.contains("complexity") || lower.contains("time") ||
+                    aiLower.contains("complexity")) {
+                    "COMPLEXITY_ANALYSIS"
+                } else {
+                    currentStage
+                }
+            }
+            "COMPLEXITY_ANALYSIS" -> "EDGE_CASES"
+            "EDGE_CASES" -> {
+                if (aiLower.contains("optimize") || aiLower.contains("improve")) {
+                    "OPTIMIZATION"
+                } else {
+                    "WRAP_UP"
+                }
+            }
+            else -> currentStage
+        }
+
+        if (newStage != currentStage) {
+            try {
+                redisMemoryService.updateMemory(sessionId) { mem ->
+                    mem.copy(interviewStage = newStage)
+                }
+                log.debug("Interview stage {} → {} for session {}", currentStage, newStage, sessionId)
+            } catch (e: Exception) {
+                log.warn("Failed to update interview stage for session {}: {}", sessionId, e.message)
+            }
+        }
     }
 
     private suspend fun persistResponse(sessionId: UUID, responseText: String) {

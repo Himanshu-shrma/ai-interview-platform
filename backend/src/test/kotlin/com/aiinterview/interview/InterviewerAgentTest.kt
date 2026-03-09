@@ -28,7 +28,7 @@ class InterviewerAgentTest {
     private val modelConfig       = ModelConfig()
     private val promptBuilder     = mockk<PromptBuilder>()
     private val registry          = mockk<WsSessionRegistry>(relaxed = true)
-    private val redisMemoryService = mockk<RedisMemoryService>()
+    private val redisMemoryService = mockk<RedisMemoryService>(relaxed = true)
     private val messageRepository = mockk<ConversationMessageRepository>()
 
     private val agent = InterviewerAgent(
@@ -47,7 +47,7 @@ class InterviewerAgentTest {
 
     @Test
     fun `streamResponse sends AiChunk tokens and done signal`() {
-        every { promptBuilder.buildSystemPrompt(memory) } returns "System prompt"
+        every { promptBuilder.buildSystemPrompt(memory, any()) } returns "System prompt"
         every { llm.stream(any()) } returns flowOf("Hello", ", world", "!")
         coEvery { redisMemoryService.appendTranscriptTurn(sessionId, "AI", any()) } returns memory
         every { messageRepository.save(any<ConversationMessage>()) } returns Mono.just(
@@ -65,7 +65,7 @@ class InterviewerAgentTest {
 
     @Test
     fun `streamResponse persists full AI message to DB`() {
-        every { promptBuilder.buildSystemPrompt(memory) } returns "System prompt"
+        every { promptBuilder.buildSystemPrompt(memory, any()) } returns "System prompt"
         every { llm.stream(any()) } returns flowOf("Great approach!")
         coEvery { redisMemoryService.appendTranscriptTurn(sessionId, "AI", any()) } returns memory
         every { messageRepository.save(any<ConversationMessage>()) } returns Mono.just(
@@ -80,7 +80,7 @@ class InterviewerAgentTest {
 
     @Test
     fun `streamResponse falls back to complete on empty stream`() {
-        every { promptBuilder.buildSystemPrompt(memory) } returns "System prompt"
+        every { promptBuilder.buildSystemPrompt(memory, any()) } returns "System prompt"
         // Primary streaming returns empty flow
         every { llm.stream(any()) } returns flowOf()
         coEvery { llm.complete(any()) } returns LlmResponse(
@@ -100,7 +100,7 @@ class InterviewerAgentTest {
 
     @Test
     fun `streamResponse sends ErrorFrame on streaming exception`() {
-        every { promptBuilder.buildSystemPrompt(memory) } returns "System prompt"
+        every { promptBuilder.buildSystemPrompt(memory, any()) } returns "System prompt"
         every { llm.stream(any()) } throws RuntimeException("Network error")
         coEvery { llm.complete(any()) } throws RuntimeException("Fallback also failed")
         coEvery { registry.sendMessage(sessionId, any()) } returns true
@@ -112,7 +112,7 @@ class InterviewerAgentTest {
 
     @Test
     fun `streamResponse appends response to Redis transcript`() {
-        every { promptBuilder.buildSystemPrompt(memory) } returns "System prompt"
+        every { promptBuilder.buildSystemPrompt(memory, any()) } returns "System prompt"
         every { llm.stream(any()) } returns flowOf("Nice solution!")
         coEvery { redisMemoryService.appendTranscriptTurn(sessionId, "AI", "Nice solution!") } returns memory
         every { messageRepository.save(any<ConversationMessage>()) } returns Mono.just(

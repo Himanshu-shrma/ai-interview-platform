@@ -38,6 +38,7 @@ class RedisMemoryService(
         userId: UUID,
         config: InterviewConfig,
         firstQuestion: InternalQuestionDto,
+        totalQuestions: Int = 1,
     ): InterviewMemory {
         val memory = InterviewMemory(
             sessionId           = sessionId,
@@ -48,6 +49,8 @@ class RedisMemoryService(
             currentQuestion     = firstQuestion,
             candidateAnalysis   = null,
             programmingLanguage = config.programmingLanguage,
+            currentQuestionIndex = 0,
+            totalQuestions       = totalQuestions,
         )
         saveMemory(sessionId, memory)
         log.debug("Initialized memory for session {}", sessionId)

@@ -94,11 +94,11 @@ class ReportService(
             throw NoSuchElementException("Session $sessionId not found")
         }
 
-        // 3. Call EvaluationAgent
+        // 3. Call EvaluationAgent (returns both text feedback AND numeric scores)
         val evalResult = evaluationAgent.evaluate(memory)
 
-        // 4. Compute weighted overall score
-        val s = memory.evalScores
+        // 4. Compute weighted overall score from LLM-generated scores
+        val s = evalResult.scores
         val overallScore = (
             s.problemSolving  * W_PROBLEM_SOLVING  +
             s.algorithmChoice * W_ALGORITHM_CHOICE +

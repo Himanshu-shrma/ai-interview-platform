@@ -17,6 +17,17 @@ data class EvaluationResult(
     val suggestions: List<String> = emptyList(),
     val narrativeSummary: String = "",
     val dimensionFeedback: Map<String, String> = emptyMap(),
+    val scores: EvaluationScores = EvaluationScores(),
+)
+
+@JsonIgnoreProperties(ignoreUnknown = true)
+data class EvaluationScores(
+    val problemSolving: Double = 0.0,
+    val algorithmChoice: Double = 0.0,
+    val codeQuality: Double = 0.0,
+    val communication: Double = 0.0,
+    val efficiency: Double = 0.0,
+    val testing: Double = 0.0,
 )
 
 @Component
@@ -33,6 +44,13 @@ class EvaluationAgent(
                 "Be specific, constructive, and honest. " +
                 "Base your evaluation ONLY on what was demonstrated in the interview. " +
                 "Return ONLY valid JSON, no markdown, no preamble.\n\n" +
+                "SCORING RULES:\n" +
+                "- Each dimension is scored 0.0 to 10.0 (one decimal place).\n" +
+                "- 0 = not demonstrated at all, 5 = average, 8+ = strong, 10 = exceptional.\n" +
+                "- If a dimension was not applicable (e.g. no code written → codeQuality), " +
+                "score it based on what WAS discussed, or give 2.0-3.0 if nothing relevant was shown.\n" +
+                "- Hints used should lower scores slightly (each hint ≈ -0.5 from relevant dimensions).\n" +
+                "- Be fair but honest — most candidates score 3-7.\n\n" +
                 "JSON schema:\n" +
                 "{\n" +
                 "  \"strengths\": [\"string\"],\n" +
@@ -46,6 +64,14 @@ class EvaluationAgent(
                 "    \"communication\": \"string\",\n" +
                 "    \"efficiency\": \"string\",\n" +
                 "    \"testing\": \"string\"\n" +
+                "  },\n" +
+                "  \"scores\": {\n" +
+                "    \"problemSolving\": 0.0,\n" +
+                "    \"algorithmChoice\": 0.0,\n" +
+                "    \"codeQuality\": 0.0,\n" +
+                "    \"communication\": 0.0,\n" +
+                "    \"efficiency\": 0.0,\n" +
+                "    \"testing\": 0.0\n" +
                 "  }\n" +
                 "}"
     }
@@ -72,7 +98,7 @@ class EvaluationAgent(
                 systemPrompt = SYSTEM_PROMPT,
                 userMessage = userPrompt,
                 model = modelConfig.evaluatorModel,
-                maxTokens = 1000,
+                maxTokens = 1500,
                 responseFormat = ResponseFormat.JSON,
             ),
         )
@@ -122,12 +148,7 @@ class EvaluationAgent(
             if (ca.gaps.isNotEmpty()) append("Gaps identified: ${ca.gaps.joinToString(", ")}\n")
         }
 
-        append("\nRaw Eval Scores (for context only — do not repeat these numbers verbatim):\n")
-        val s = memory.evalScores
-        append("  problemSolving=${s.problemSolving}, algorithmChoice=${s.algorithmChoice}, ")
-        append("codeQuality=${s.codeQuality}, communication=${s.communication}, ")
-        append("efficiency=${s.efficiency}, testing=${s.testing}\n")
-        append("Hints given: ${memory.hintsGiven}\n")
+        append("\nHints given: ${memory.hintsGiven}/3\n")
         if (memory.followUpsAsked.isNotEmpty()) {
             append("Follow-ups asked: ${memory.followUpsAsked.joinToString(", ")}\n")
         }
@@ -149,6 +170,10 @@ class EvaluationAgent(
             "communication" to "Not evaluated",
             "efficiency" to "Not evaluated",
             "testing" to "Not evaluated",
+        ),
+        scores = EvaluationScores(
+            problemSolving = 3.0, algorithmChoice = 3.0, codeQuality = 3.0,
+            communication = 3.0, efficiency = 3.0, testing = 3.0,
         ),
     )
 }

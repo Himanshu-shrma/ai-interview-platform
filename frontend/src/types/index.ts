@@ -183,6 +183,7 @@ export type WsOutboundType =
   | 'CODE_RESULT'
   | 'HINT_RESPONSE'
   | 'HINT_DELIVERED'
+  | 'QUESTION_TRANSITION'
   | 'INTERVIEW_ENDED'
   | 'SESSION_END'
   | 'ERROR'
@@ -238,6 +239,13 @@ export interface HintDeliveredMessage extends WsOutboundMessage {
   level: number
   hintsRemaining: number
   refused: boolean
+}
+
+export interface QuestionTransitionMessage extends WsOutboundMessage {
+  type: 'QUESTION_TRANSITION'
+  questionIndex: number
+  questionTitle: string
+  questionDescription: string
 }
 
 export interface SessionEndMessage extends WsOutboundMessage {

@@ -22,6 +22,9 @@ data class InterviewMemory(
     val rollingTranscript: List<TranscriptTurn> = emptyList(),
     val earlierContext: String = "",
     val evalScores: EvalScores = EvalScores(),
+    val interviewStage: String = "PROBLEM_PRESENTED",
+    val currentQuestionIndex: Int = 0,
+    val totalQuestions: Int = 1,
     val createdAt: Instant = Instant.now(),
     val lastActivityAt: Instant = Instant.now(),
 )

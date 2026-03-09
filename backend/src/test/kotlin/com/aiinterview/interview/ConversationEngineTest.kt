@@ -6,11 +6,14 @@ import com.aiinterview.conversation.InterviewState
 import com.aiinterview.conversation.InterviewerAgent
 import com.aiinterview.interview.model.ConversationMessage
 import com.aiinterview.interview.repository.ConversationMessageRepository
+import com.aiinterview.interview.repository.SessionQuestionRepository
 import com.aiinterview.interview.service.InterviewMemory
+import com.aiinterview.interview.service.QuestionService
 import com.aiinterview.interview.service.RedisMemoryService
 import com.aiinterview.interview.ws.OutboundMessage
 import com.aiinterview.interview.ws.WsSessionRegistry
 import com.aiinterview.report.service.ReportService
+import com.fasterxml.jackson.databind.ObjectMapper
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
@@ -23,18 +26,24 @@ import java.util.UUID
 
 class ConversationEngineTest {
 
-    private val redisMemoryService = mockk<RedisMemoryService>()
-    private val interviewerAgent   = mockk<InterviewerAgent>(relaxed = true)
-    private val registry           = mockk<WsSessionRegistry>(relaxed = true)
-    private val messageRepository  = mockk<ConversationMessageRepository>()
-    private val agentOrchestrator  = mockk<AgentOrchestrator>(relaxed = true)
-    private val reportService       = mockk<ReportService>(relaxed = true)
+    private val redisMemoryService      = mockk<RedisMemoryService>()
+    private val interviewerAgent        = mockk<InterviewerAgent>(relaxed = true)
+    private val registry                = mockk<WsSessionRegistry>(relaxed = true)
+    private val messageRepository       = mockk<ConversationMessageRepository>()
+    private val sessionQuestionRepository = mockk<SessionQuestionRepository>(relaxed = true)
+    private val questionService         = mockk<QuestionService>(relaxed = true)
+    private val objectMapper            = ObjectMapper()
+    private val agentOrchestrator       = mockk<AgentOrchestrator>(relaxed = true)
+    private val reportService           = mockk<ReportService>(relaxed = true)
 
     private val engine = ConversationEngine(
         redisMemoryService            = redisMemoryService,
         interviewerAgent              = interviewerAgent,
         registry                      = registry,
         conversationMessageRepository = messageRepository,
+        sessionQuestionRepository     = sessionQuestionRepository,
+        questionService               = questionService,
+        objectMapper                  = objectMapper,
         agentOrchestrator             = agentOrchestrator,
         reportService                 = reportService,
     )
@@ -106,7 +115,11 @@ class ConversationEngineTest {
     fun `startInterview transitions to QuestionPresented`() {
         coEvery { redisMemoryService.getMemory(sessionId) } returns buildMemory("INTERVIEW_STARTING")
         coEvery { redisMemoryService.updateMemory(sessionId, any()) } returns buildMemory("QUESTION_PRESENTED")
+        coEvery { redisMemoryService.appendTranscriptTurn(sessionId, any(), any()) } returns buildMemory("QUESTION_PRESENTED")
         coEvery { registry.sendMessage(sessionId, any()) } returns true
+        every { messageRepository.save(any<ConversationMessage>()) } returns Mono.just(
+            ConversationMessage(sessionId = sessionId, role = "AI", content = "test")
+        )
 
         runTest {
             engine.startInterview(sessionId)

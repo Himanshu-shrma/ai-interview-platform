@@ -31,9 +31,14 @@ class InterviewController(
 
     @PostMapping("/sessions")
     suspend fun startSession(
-        @RequestBody config: InterviewConfig,
+        @RequestBody(required = false) config: InterviewConfig?,
         authentication: Authentication,
-    ): ResponseEntity<StartSessionResponse> {
+    ): ResponseEntity<Any> {
+        if (config == null) {
+            return ResponseEntity.badRequest().body(
+                ApiError(error = "BAD_REQUEST", message = "Request body is required")
+            )
+        }
         val user = authentication.principal as? User
             ?: return ResponseEntity.status(401).build()
         val response = interviewSessionService.startSession(user, config)

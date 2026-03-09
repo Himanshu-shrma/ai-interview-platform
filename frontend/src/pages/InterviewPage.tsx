@@ -29,6 +29,7 @@ import type {
   CodeResultMessage,
   CodeRunResultMessage,
   HintDeliveredMessage,
+  QuestionTransitionMessage,
   SessionEndMessage,
   WsErrorMessage,
 } from '@/types'
@@ -58,9 +59,14 @@ export default function InterviewPage() {
   const [showCodeEditor, setShowCodeEditor] = useState(false)
   const [reportId, setReportId] = useState<string | null>(null)
   const [endDialogOpen, setEndDialogOpen] = useState(false)
+  const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0)
 
   // Track whether AI is mid-stream
   const isStreamingRef = useRef(false)
+
+  // Ref for session data — avoids putting `session` in handleMessage deps
+  const sessionRef = useRef(session)
+  sessionRef.current = session
 
   // WS message handler
   const handleMessage = useCallback(
@@ -68,8 +74,8 @@ export default function InterviewPage() {
       switch (msg.type) {
         case 'INTERVIEW_STARTED': {
           // Initialize language from session
-          if (session?.programmingLanguage) {
-            setCurrentLanguage(session.programmingLanguage)
+          if (sessionRef.current?.programmingLanguage) {
+            setCurrentLanguage(sessionRef.current.programmingLanguage)
           }
           break
         }
@@ -129,6 +135,19 @@ export default function InterviewPage() {
           break
         }
 
+        case 'QUESTION_TRANSITION': {
+          const qt = msg as QuestionTransitionMessage
+          // Reset per-question UI state for the new question
+          setCurrentQuestionIndex(qt.questionIndex)
+          setCurrentCode('')
+          setCodeResult(null)
+          setHintState(null)
+          setHintsGiven(0)
+          setShowCodeEditor(false)
+          addAiMessage(`Moving to Question ${qt.questionIndex + 1}: **${qt.questionTitle}**`)
+          break
+        }
+
         case 'SESSION_END': {
           const end = msg as SessionEndMessage
           setReportId(end.reportId)
@@ -151,7 +170,7 @@ export default function InterviewPage() {
           break
       }
     },
-    [session, finalizeAiMessage, appendAiToken, addAiMessage, navigate, sessionId]
+    [finalizeAiMessage, appendAiToken, addAiMessage, navigate, sessionId]
   )
 
   const { send, status } = useInterviewSocket({
@@ -204,7 +223,9 @@ export default function InterviewPage() {
 
   const isEnded = currentState === 'EVALUATING' || currentState === 'INTERVIEW_END' || !!reportId
   const isEvaluating = currentState === 'EVALUATING' && !reportId
-  const questionTitle = session?.questions?.[0]?.title ?? 'Interview Session'
+  const headerTitle = session?.category
+    ? `${session.category.charAt(0) + session.category.slice(1).toLowerCase().replace('_', ' ')} Interview`
+    : 'Interview Session'
 
   // Loading screen
   if (!session) {
@@ -220,7 +241,12 @@ export default function InterviewPage() {
       {/* Header */}
       <header className="flex items-center justify-between border-b px-4 py-2 shrink-0">
         <div className="flex items-center gap-3 min-w-0">
-          <h1 className="text-sm font-semibold truncate">{questionTitle}</h1>
+          <h1 className="text-sm font-semibold truncate">{headerTitle}</h1>
+          {session.questions.length > 1 && (
+            <span className="text-xs text-muted-foreground font-medium">
+              Q{currentQuestionIndex + 1}/{session.questions.length}
+            </span>
+          )}
           <CategoryBadge category={session.category} />
           <DifficultyBadge difficulty={session.difficulty} />
           {status !== 'connected' && (

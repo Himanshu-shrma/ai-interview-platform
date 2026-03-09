@@ -21,6 +21,7 @@ class AgentOrchestrator(
     private val interviewerAgent: InterviewerAgent,
     private val redisMemoryService: RedisMemoryService,
     private val registry: WsSessionRegistry,
+    @Lazy private val conversationEngine: ConversationEngine,
     @Lazy private val reportService: ReportService,
 ) {
     private val log = LoggerFactory.getLogger(AgentOrchestrator::class.java)
@@ -47,31 +48,39 @@ class AgentOrchestrator(
             }
 
             InterviewState.Evaluating -> {
-                transition(sessionId, InterviewState.Evaluating)
-                launchReportGeneration(sessionId)
+                handleQuestionComplete(sessionId)
             }
 
             InterviewState.FollowUp -> {
-                val currentMemory = redisMemoryService.getMemory(sessionId)
-                val question = try {
-                    followUpGenerator.generate(currentMemory, result.analysis.gaps)
-                } catch (e: Exception) {
-                    log.error("FollowUpGenerator failed for session {}: {}", sessionId, e.message)
-                    ""
-                }
-                if (question.isBlank()) {
-                    transition(sessionId, InterviewState.Evaluating)
-                    launchReportGeneration(sessionId)
-                } else {
-                    transition(sessionId, InterviewState.FollowUp)
-                    val updatedMemory = redisMemoryService.getMemory(sessionId)
-                    interviewerAgent.streamResponse(sessionId, updatedMemory, question)
-                }
+                // Analysis identified gaps — store them in Redis so the NEXT candidate turn's
+                // prompt incorporates them. Do NOT send a second AI message; the interviewer
+                // already responded in this turn. The gaps will inform the next response naturally.
+                transition(sessionId, InterviewState.FollowUp)
+                log.debug("Gaps stored for session {}: {}", sessionId, result.analysis.gaps)
             }
 
             null -> log.debug("No state transition needed for session {}", sessionId)
 
             else -> log.warn("Unexpected transition suggestion {} for session {}", result.suggestedTransition, sessionId)
+        }
+    }
+
+    /**
+     * Called when the current question is considered complete.
+     * If more questions remain, transitions to the next one.
+     * Otherwise, proceeds to evaluation and report generation.
+     */
+    private suspend fun handleQuestionComplete(sessionId: UUID) {
+        val memory = redisMemoryService.getMemory(sessionId)
+        val hasMoreQuestions = memory.currentQuestionIndex + 1 < memory.totalQuestions
+
+        if (hasMoreQuestions) {
+            log.info("Question {} of {} done for session {}, transitioning to next",
+                memory.currentQuestionIndex + 1, memory.totalQuestions, sessionId)
+            conversationEngine.transitionToNextQuestion(sessionId)
+        } else {
+            transition(sessionId, InterviewState.Evaluating)
+            launchReportGeneration(sessionId)
         }
     }
 

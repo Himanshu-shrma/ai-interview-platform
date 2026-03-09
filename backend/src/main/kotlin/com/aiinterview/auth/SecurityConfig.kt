@@ -2,6 +2,7 @@ package com.aiinterview.auth
 
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
+import org.springframework.http.HttpMethod
 import org.springframework.http.HttpStatus
 import org.springframework.http.MediaType
 import org.springframework.security.config.annotation.web.reactive.EnableWebFluxSecurity
@@ -20,10 +21,13 @@ class SecurityConfig {
     fun securityWebFilterChain(http: ServerHttpSecurity): SecurityWebFilterChain =
         http
             .csrf { it.disable() }
+            // CORS handled by standalone CorsWebFilter bean (not .cors{} to avoid
+            // ReadOnlyHttpHeaders bug in Spring WebFlux 6.2.x with coroutine handlers)
             // Stateless: do not persist SecurityContext in the WebSession
             .securityContextRepository(NoOpServerSecurityContextRepository.getInstance())
             .authorizeExchange { exchanges ->
                 exchanges
+                    .pathMatchers(HttpMethod.OPTIONS, "/**").permitAll() // CORS preflight
                     .pathMatchers("/health", "/actuator/**", "/ws/**", "/api/v1/code/languages").permitAll()
                     .pathMatchers("/api/**").authenticated()
                     .anyExchange().permitAll()

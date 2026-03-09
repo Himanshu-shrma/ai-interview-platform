@@ -28,8 +28,13 @@ frontend/coverage/
 Thumbs.db
 desktop.ini
 
-# ── Docker ────────────────────────────────────────────────────────────────────
+# ── Logs ──────────────────────────────────────────────────────────────────────
 *.log
+.logs/
+
+# ── Playwright ───────────────────────────────────────────────────────────────
+frontend/test-results/
+frontend/playwright-report/
 
 # ── Judge0 runtime data (if any local override) ───────────────────────────────
 judge0/judge0.conf.local

@@ -3,6 +3,8 @@ package com.aiinterview.shared
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
+import org.springframework.core.Ordered
+import org.springframework.core.annotation.Order
 import org.springframework.web.cors.CorsConfiguration
 import org.springframework.web.cors.reactive.CorsWebFilter
 import org.springframework.web.cors.reactive.UrlBasedCorsConfigurationSource
@@ -13,6 +15,7 @@ class CorsConfig(
 ) {
 
     @Bean
+    @Order(Ordered.HIGHEST_PRECEDENCE)
     fun corsWebFilter(): CorsWebFilter {
         val origins = corsAllowedOrigins.split(",").map { it.trim() }
         val config = CorsConfiguration().apply {

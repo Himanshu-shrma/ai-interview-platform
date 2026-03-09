@@ -47,6 +47,7 @@ data class TestResult(
     JsonSubTypes.Type(value = OutboundMessage.CodeResult::class,        name = "CODE_RESULT"),
     JsonSubTypes.Type(value = OutboundMessage.HintResponse::class,      name = "HINT_RESPONSE"),
     JsonSubTypes.Type(value = OutboundMessage.HintDelivered::class,     name = "HINT_DELIVERED"),
+    JsonSubTypes.Type(value = OutboundMessage.QuestionTransition::class, name = "QUESTION_TRANSITION"),
     JsonSubTypes.Type(value = OutboundMessage.InterviewEnded::class,    name = "INTERVIEW_ENDED"),
     JsonSubTypes.Type(value = OutboundMessage.SessionEnd::class,        name = "SESSION_END"),
     JsonSubTypes.Type(value = OutboundMessage.Error::class,             name = "ERROR"),
@@ -69,6 +70,8 @@ sealed class OutboundMessage {
     ) : OutboundMessage()
     data class HintResponse(val hint: String, val hintsGiven: Int) : OutboundMessage()
     data class HintDelivered(val hint: String, val level: Int, val hintsRemaining: Int, val refused: Boolean = false) : OutboundMessage()
+    /** Sent when transitioning from Q1 to Q2 — carries new question details. */
+    data class QuestionTransition(val questionIndex: Int, val questionTitle: String, val questionDescription: String) : OutboundMessage()
     data class InterviewEnded(val reason: String, val overallScore: Double) : OutboundMessage()
     /** Sent when evaluation report is ready — carries reportId for redirect. */
     data class SessionEnd(val reportId: UUID) : OutboundMessage()
