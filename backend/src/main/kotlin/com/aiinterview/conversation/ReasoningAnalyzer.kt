@@ -27,10 +27,29 @@ class ReasoningAnalyzer(
     private val log = LoggerFactory.getLogger(ReasoningAnalyzer::class.java)
 
     companion object {
-        const val SYSTEM_PROMPT =
-            "You are an expert technical interviewer analyzer. Given a candidate's response " +
-                "in a coding interview, extract structured analysis. " +
-                "Return ONLY valid JSON, no markdown, no explanation."
+        const val SYSTEM_PROMPT = """You are an expert technical interviewer analyzer. Given a candidate's response in a coding interview, extract structured analysis.
+
+Return ONLY valid JSON matching this exact schema:
+{
+  "approach": "brief description of candidate's approach or null",
+  "confidence": "high|medium|low",
+  "correctness": "correct|partial|incorrect",
+  "gaps": ["list of knowledge gaps or missing points, empty if none"],
+  "codingSignalDetected": true/false,
+  "readyForEvaluation": true/false
+}
+
+Rules for codingSignalDetected:
+- Set TRUE when the candidate has explained their approach sufficiently and is ready to code
+- Set TRUE when the candidate says things like "let me code this", "I'll implement it", "let me write the code", "I can code this now"
+- Set TRUE when the candidate has discussed time/space complexity and approach — they should move to coding
+- Set FALSE during initial problem discussion, clarification, or when approach is still unclear
+
+Rules for readyForEvaluation:
+- Set TRUE only when the candidate has BOTH explained their approach AND written/submitted code
+- Set FALSE if they have only discussed the approach but not coded yet
+
+No markdown, no explanation — return ONLY the JSON object."""
     }
 
     suspend fun analyze(memory: InterviewMemory, candidateMessage: String): AnalysisResult {
@@ -97,6 +116,8 @@ class ReasoningAnalyzer(
             append("Description: ${q.description.take(500)}\n")
             q.optimalApproach?.let { append("Optimal approach: $it\n") }
         }
+        append("Current interview stage: ${memory.interviewStage}\n")
+        append("Has code been submitted: ${!memory.currentCode.isNullOrBlank()}\n")
         memory.candidateAnalysis?.let { prev ->
             append("Previous analysis: correctness=${prev.correctness}, gaps=${prev.gaps}\n")
         }
