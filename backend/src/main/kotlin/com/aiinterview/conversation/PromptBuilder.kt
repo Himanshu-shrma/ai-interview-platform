@@ -202,23 +202,43 @@ RULES:
 - Only ask this ONCE. If they're already talking approach, just listen.
 """.trimIndent()
 
-            "APPROACH" -> """
+            "APPROACH" -> {
+                val codeContext = if (!hasMeaningfulCode) """
+CRITICAL — CODE EDITOR STATUS: EMPTY
+The candidate has NOT written any code yet.
+
+YOUR ONLY VALID ACTIONS:
+- React to their approach explanation
+- Ask ONE clarifying question about approach
+- If approach is good: say "Go ahead and code it."
+
+YOU MUST NOT:
+- Ask about time complexity (no code exists)
+- Ask about space complexity (no code exists)
+- Ask about edge cases (no code to test)
+- Ask more than ONE question
+
+The moment you say "go ahead and code it" or "let's see it in code", transition to CODING stage.
+""" else """
+CODE EXISTS in editor.
+You may now discuss complexity and edge cases.
+"""
+                """
 === STAGE: APPROACH ===
-The candidate is explaining their approach. NO code yet.
+The candidate is explaining their approach.
+
+$codeContext
 
 RULES:
 - React to THEIR specific approach, not generic. Reference what they said.
-- Ask ONE targeted follow-up about their approach.
-  "What's the time complexity of that?" or "How would you handle duplicates?"
 - If they describe a brute force approach: "Can you think of anything more efficient?"
 - If they describe an optimal approach: "Sounds good. Go ahead and code it up."
 
 THE MOMENT you say "go ahead and code it" or "implement that":
 - This MUST be your final sentence. Say NOTHING else after it.
 - No hints. No tips. No "keep in mind..." — just let them code.
-
-${if (hasMeaningfulCode) "NOTE: Editor already has code — candidate may have started coding." else "CODE EDITOR: Empty — candidate hasn't started coding yet."}
 """.trimIndent()
+            }
 
             "CODING" -> """
 === STAGE: CODING ===

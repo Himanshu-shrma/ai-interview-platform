@@ -118,7 +118,18 @@ class ConversationEngine(
         // (triggered after the candidate's first response).
         transition(sessionId, InterviewState.QuestionPresented)
 
-        val openingMessage = "Hey! How's it going? I'll be your interviewer today. Whenever you're ready, we can jump in."
+        val openingMessage = when (memory.personality.uppercase()) {
+            "FAANG_SENIOR" ->
+                "Hey. Ready to get started? I'll share the problem."
+            "FRIENDLY_MENTOR", "FRIENDLY" ->
+                "Hey! How's it going? Excited to work through this with you today."
+            "STARTUP_ENGINEER", "STARTUP" ->
+                "Hey, welcome. Let's jump right in \u2014 I'll share a problem and we'll work through it together."
+            "ADAPTIVE" ->
+                "Hi! How are you doing today? Ready to get started?"
+            else ->
+                "Hey! How's it going? I'll be your interviewer today. Whenever you're ready, we can jump in."
+        }
 
         registry.sendMessage(sessionId, OutboundMessage.AiChunk(delta = openingMessage, done = false))
         registry.sendMessage(sessionId, OutboundMessage.AiChunk(delta = "", done = true))

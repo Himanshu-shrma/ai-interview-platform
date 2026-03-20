@@ -61,6 +61,25 @@ class InterviewerAgent(
         memory: InterviewMemory,
         userMessage: String,
     ) {
+        // ── FIX 1: CODING GATE — skip LLM when stage=CODING and no real code ──
+        val codeContent = memory.currentCode?.trim()
+        val hasMeaningfulCode = !codeContent.isNullOrBlank()
+            && codeContent.length > 50
+            && codeContent != "class {}"
+
+        if (memory.interviewStage == "CODING" && !hasMeaningfulCode) {
+            val response = when {
+                userMessage.length > 100 ->
+                    "I think I get the idea — go ahead and implement it."
+                userMessage.lowercase().let { it.contains("code") || it.contains("implement") } ->
+                    "Sure, take your time."
+                else -> "Go ahead."
+            }
+            streamStaticResponse(sessionId, response)
+            persistResponse(sessionId, response)
+            return
+        }
+
         val messageType = classifyMessage(userMessage)
         val systemPrompt = promptBuilder.buildSystemPrompt(memory, messageType)
         val fullResponse = StringBuilder()
@@ -283,6 +302,12 @@ class InterviewerAgent(
                 log.warn("Failed to update interview stage for session {}: {}", sessionId, e.message)
             }
         }
+    }
+
+    /** Streams a canned response as AI_CHUNK frames (same as LLM output from frontend perspective). */
+    private suspend fun streamStaticResponse(sessionId: UUID, response: String) {
+        registry.sendMessage(sessionId, OutboundMessage.AiChunk(delta = response, done = false))
+        registry.sendMessage(sessionId, OutboundMessage.AiChunk(delta = "", done = true))
     }
 
     private suspend fun persistResponse(sessionId: UUID, responseText: String) {
