@@ -51,6 +51,10 @@ class RedisMemoryService(
             programmingLanguage = config.programmingLanguage,
             currentQuestionIndex = 0,
             totalQuestions       = totalQuestions,
+            targetCompany       = config.targetCompany,
+            targetRole          = config.targetRole,
+            experienceLevel     = config.experienceLevel,
+            background          = config.background,
         )
         saveMemory(sessionId, memory)
         log.debug("Initialized memory for session {}", sessionId)

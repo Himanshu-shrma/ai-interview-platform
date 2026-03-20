@@ -11,10 +11,21 @@ import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Component
 
 @JsonIgnoreProperties(ignoreUnknown = true)
+data class NextStep(
+    val area: String = "",
+    val specificGap: String = "",
+    val evidenceFromInterview: String = "",
+    val actionItem: String = "",
+    val resource: String = "",
+    val priority: String = "MEDIUM",
+)
+
+@JsonIgnoreProperties(ignoreUnknown = true)
 data class EvaluationResult(
     val strengths: List<String> = emptyList(),
     val weaknesses: List<String> = emptyList(),
     val suggestions: List<String> = emptyList(),
+    val nextSteps: List<NextStep> = emptyList(),
     val narrativeSummary: String = "",
     val dimensionFeedback: Map<String, String> = emptyMap(),
     val scores: EvaluationScores = EvaluationScores(),
@@ -39,7 +50,7 @@ class EvaluationAgent(
     private val log = LoggerFactory.getLogger(EvaluationAgent::class.java)
 
     companion object {
-        const val SYSTEM_PROMPT =
+        private const val BASE_SYSTEM_PROMPT =
             "You are an expert technical interviewer writing a post-interview evaluation report. " +
                 "Be specific, constructive, and honest. " +
                 "Base your evaluation ONLY on what was demonstrated in the interview. " +
@@ -50,12 +61,44 @@ class EvaluationAgent(
                 "- If a dimension was not applicable (e.g. no code written → codeQuality), " +
                 "score it based on what WAS discussed, or give 2.0-3.0 if nothing relevant was shown.\n" +
                 "- Hints used should lower scores slightly (each hint ≈ -0.5 from relevant dimensions).\n" +
-                "- Be fair but honest — most candidates score 3-7.\n\n" +
-                "JSON schema:\n" +
+                "- Be fair but honest — most candidates score 3-7.\n\n"
+
+        private const val CODING_CRITERIA =
+            "EVALUATION CRITERIA (Coding/DSA):\n" +
+                "- problemSolving: Understanding the problem, breaking it down, identifying edge cases\n" +
+                "- algorithmChoice: Selecting appropriate data structures and algorithms\n" +
+                "- codeQuality: Clean, readable, correct code with proper error handling\n" +
+                "- communication: Explaining thought process clearly throughout\n" +
+                "- efficiency: Time and space complexity awareness, optimization\n" +
+                "- testing: Edge case identification, debugging, verification\n\n"
+
+        private const val BEHAVIORAL_CRITERIA =
+            "EVALUATION CRITERIA (Behavioral — use STAR method):\n" +
+                "- problemSolving: Maps to SITUATION — Did they set clear context?\n" +
+                "- algorithmChoice: Maps to TASK — Did they define their specific role and goals?\n" +
+                "- codeQuality: Maps to ACTION — Were their actions specific, detailed, and impactful?\n" +
+                "- communication: Maps to RESULT — Did they quantify outcomes and reflect on learnings?\n" +
+                "- efficiency: Maps to DEPTH — Did they provide multiple examples across different domains?\n" +
+                "- testing: Maps to GROWTH — Did they show self-awareness and learning from experience?\n\n"
+
+        private const val SYSTEM_DESIGN_CRITERIA =
+            "EVALUATION CRITERIA (System Design):\n" +
+                "- problemSolving: Requirements gathering, scope definition, functional + non-functional\n" +
+                "- algorithmChoice: Architecture decisions, component selection, technology choices\n" +
+                "- codeQuality: Data modeling, API design, schema decisions\n" +
+                "- communication: Explaining trade-offs, driving the design discussion\n" +
+                "- efficiency: Scalability analysis, bottleneck identification, capacity estimation\n" +
+                "- testing: Reliability, fault tolerance, monitoring considerations\n\n"
+
+        private const val JSON_SCHEMA =
+            "JSON schema:\n" +
                 "{\n" +
                 "  \"strengths\": [\"string\"],\n" +
                 "  \"weaknesses\": [\"string\"],\n" +
                 "  \"suggestions\": [\"string\"],\n" +
+                "  \"nextSteps\": [{\"area\": \"string\", \"specificGap\": \"string\", " +
+                "\"evidenceFromInterview\": \"string\", \"actionItem\": \"string\", " +
+                "\"resource\": \"string\", \"priority\": \"HIGH|MEDIUM|LOW\"}],\n" +
                 "  \"narrativeSummary\": \"string\",\n" +
                 "  \"dimensionFeedback\": {\n" +
                 "    \"problemSolving\": \"string\",\n" +
@@ -74,17 +117,27 @@ class EvaluationAgent(
                 "    \"testing\": 0.0\n" +
                 "  }\n" +
                 "}"
+
+        fun systemPromptFor(category: String): String {
+            val criteria = when (category.uppercase()) {
+                "BEHAVIORAL" -> BEHAVIORAL_CRITERIA
+                "SYSTEM_DESIGN" -> SYSTEM_DESIGN_CRITERIA
+                else -> CODING_CRITERIA
+            }
+            return BASE_SYSTEM_PROMPT + criteria + JSON_SCHEMA
+        }
     }
 
     suspend fun evaluate(memory: InterviewMemory): EvaluationResult {
         val userPrompt = buildUserPrompt(memory)
+        val systemPrompt = systemPromptFor(memory.category)
 
-        val raw1 = callLlm(userPrompt)
+        val raw1 = callLlm(systemPrompt, userPrompt)
         val result1 = raw1?.let { parseResult(it) }
         if (result1 != null) return result1
 
         log.warn("EvaluationAgent first attempt failed for session {} — retrying", memory.sessionId)
-        val raw2 = callLlm(userPrompt)
+        val raw2 = callLlm(systemPrompt, userPrompt)
         val result2 = raw2?.let { parseResult(it) }
         if (result2 != null) return result2
 
@@ -92,13 +145,13 @@ class EvaluationAgent(
         return defaultResult()
     }
 
-    private suspend fun callLlm(userPrompt: String): String? = try {
+    private suspend fun callLlm(systemPrompt: String, userPrompt: String): String? = try {
         val response = llm.complete(
             LlmRequest.build(
-                systemPrompt = SYSTEM_PROMPT,
+                systemPrompt = systemPrompt,
                 userMessage = userPrompt,
                 model = modelConfig.evaluatorModel,
-                maxTokens = 1500,
+                maxTokens = 2000,
                 responseFormat = ResponseFormat.JSON,
             ),
         )

@@ -16,7 +16,7 @@ import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { cn } from '@/lib/utils'
 import { Loader2 } from 'lucide-react'
-import type { ReportDto, ScoresDto } from '@/types'
+import type { ReportDto, ScoresDto, NextStep } from '@/types'
 
 // ── Score count-up animation hook ──
 
@@ -72,6 +72,15 @@ const dimensionLabels: Record<keyof Omit<ScoresDto, 'overall'>, string> = {
   testing: 'Testing',
 }
 
+const DIMENSION_EXPLANATIONS: Record<keyof Omit<ScoresDto, 'overall'>, string> = {
+  problemSolving: 'How well you understood the problem, identified constraints, and broke it into sub-problems.',
+  algorithmChoice: 'Selection of appropriate data structures and algorithms, with clear rationale for trade-offs.',
+  codeQuality: 'Code readability, correctness, proper naming, and clean structure.',
+  communication: 'Clarity of thought process explanation, asking good questions, and articulating decisions.',
+  efficiency: 'Awareness of time/space complexity, optimization attempts, and performance considerations.',
+  testing: 'Edge case identification, debugging approach, and verification of solution correctness.',
+}
+
 function buildRadarData(scores: ScoresDto) {
   return (Object.keys(dimensionLabels) as (keyof typeof dimensionLabels)[]).map((key) => ({
     dimension: dimensionLabels[key],
@@ -87,11 +96,13 @@ function DimensionBar({
   score,
   feedback,
   delay,
+  explanation,
 }: {
   label: string
   score: number
   feedback?: string
   delay: number
+  explanation?: string
 }) {
   const [width, setWidth] = useState(0)
   useEffect(() => {
@@ -102,7 +113,14 @@ function DimensionBar({
   return (
     <div className="space-y-1">
       <div className="flex items-center justify-between text-sm">
-        <span className="font-medium">{label}</span>
+        <span className="font-medium group relative cursor-help">
+          {label}
+          {explanation && (
+            <span className="invisible group-hover:visible absolute left-0 top-full z-10 mt-1 w-64 rounded-md bg-popover p-2 text-xs text-popover-foreground shadow-md border">
+              {explanation}
+            </span>
+          )}
+        </span>
         <span className={cn('font-semibold tabular-nums', scoreColor(score))}>
           {score.toFixed(1)}/10
         </span>
@@ -268,6 +286,7 @@ function ReportContent({ report }: { report: ReportDto }) {
               label={dimensionLabels[key]}
               score={report.scores[key]}
               feedback={report.dimensionFeedback[key]}
+              explanation={DIMENSION_EXPLANATIONS[key]}
               delay={i * 100}
             />
           ))}
@@ -344,6 +363,50 @@ function ReportContent({ report }: { report: ReportDto }) {
           </Card>
         )}
       </div>
+
+      {/* Study Plan — next steps */}
+      {report.nextSteps && report.nextSteps.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Your Study Plan</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {report.nextSteps.map((step: NextStep, i: number) => (
+              <div
+                key={i}
+                className={cn(
+                  'rounded-lg border p-4 space-y-1',
+                  step.priority === 'HIGH' ? 'border-l-4 border-l-red-500' :
+                  step.priority === 'MEDIUM' ? 'border-l-4 border-l-yellow-500' :
+                  'border-l-4 border-l-green-500'
+                )}
+              >
+                <div className="flex items-center justify-between">
+                  <span className="font-medium text-sm">{step.area}</span>
+                  <span className={cn(
+                    'text-xs px-2 py-0.5 rounded-full font-medium',
+                    step.priority === 'HIGH' ? 'bg-red-100 text-red-700' :
+                    step.priority === 'MEDIUM' ? 'bg-yellow-100 text-yellow-700' :
+                    'bg-green-100 text-green-700'
+                  )}>
+                    {step.priority}
+                  </span>
+                </div>
+                <p className="text-xs text-muted-foreground">{step.specificGap}</p>
+                {step.evidenceFromInterview && (
+                  <p className="text-xs italic text-muted-foreground">
+                    Evidence: {step.evidenceFromInterview}
+                  </p>
+                )}
+                <p className="text-sm">{step.actionItem}</p>
+                {step.resource && (
+                  <p className="text-xs text-blue-600">{step.resource}</p>
+                )}
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+      )}
 
       {/* Session details */}
       <Card>

@@ -28,6 +28,8 @@ data class EvaluationReport(
     /** JSONB — map of dimensionName → one-sentence feedback string */
     val dimensionFeedback: String? = null,
     val hintsUsed: Int = 0,
+    /** JSONB — list of NextStep objects with area, gap, action, resource, priority */
+    val nextSteps: String? = null,
     val completedAt: OffsetDateTime? = null,
     val createdAt: OffsetDateTime? = null,
 )

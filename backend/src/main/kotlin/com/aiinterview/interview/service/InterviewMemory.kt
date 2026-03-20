@@ -25,6 +25,10 @@ data class InterviewMemory(
     val interviewStage: String = "SMALL_TALK",
     val currentQuestionIndex: Int = 0,
     val totalQuestions: Int = 1,
+    val targetCompany: String? = null,
+    val targetRole: String? = null,
+    val experienceLevel: String? = null,
+    val background: String? = null,
     val createdAt: Instant = Instant.now(),
     val lastActivityAt: Instant = Instant.now(),
 )

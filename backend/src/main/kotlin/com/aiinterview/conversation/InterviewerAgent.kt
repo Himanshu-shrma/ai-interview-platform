@@ -61,22 +61,22 @@ class InterviewerAgent(
         memory: InterviewMemory,
         userMessage: String,
     ) {
-        // ── FIX 1: CODING GATE — skip LLM when stage=CODING and no real code ──
-        val codeContent = memory.currentCode?.trim()
-        val hasMeaningfulCode = !codeContent.isNullOrBlank()
-            && codeContent.length > 50
-            && codeContent != "class {}"
-
-        if (memory.interviewStage == "CODING" && !hasMeaningfulCode) {
-            val response = when {
-                userMessage.length > 100 ->
-                    "I think I get the idea — go ahead and implement it."
-                userMessage.lowercase().let { it.contains("code") || it.contains("implement") } ->
+        // ── CODING GATE — skip LLM when stage=CODING and no real code ──
+        if (memory.interviewStage == "CODING" && !hasMeaningfulCode(memory)) {
+            val msgLower = userMessage.lowercase()
+            val cannedResponse = when {
+                userMessage.length > 150 ->
+                    "I think I follow your approach \u2014 go ahead and implement it in the editor."
+                msgLower.contains("start") || msgLower.contains("begin") ||
+                    msgLower.contains("implement") || msgLower.contains("code") ||
+                    msgLower.contains("write") ->
                     "Sure, take your time."
-                else -> "Go ahead."
+                msgLower.contains("done") || msgLower.contains("finish") ->
+                    "I don't see code in the editor yet \u2014 go ahead and implement when ready."
+                else -> "Go ahead \u2014 I'll wait while you code."
             }
-            streamStaticResponse(sessionId, response)
-            persistResponse(sessionId, response)
+            streamStaticResponse(sessionId, cannedResponse)
+            persistResponse(sessionId, cannedResponse)
             return
         }
 
@@ -308,6 +308,20 @@ class InterviewerAgent(
     private suspend fun streamStaticResponse(sessionId: UUID, response: String) {
         registry.sendMessage(sessionId, OutboundMessage.AiChunk(delta = response, done = false))
         registry.sendMessage(sessionId, OutboundMessage.AiChunk(delta = "", done = true))
+    }
+
+    private fun hasMeaningfulCode(memory: InterviewMemory): Boolean {
+        val code = memory.currentCode ?: return false
+        val trimmed = code.trim()
+        if (trimmed.length < 50) return false
+        if (trimmed == "class {}") return false
+        if (trimmed == "class Main {}") return false
+        val templateIndicators = listOf(
+            "// your code here", "// write your code", "// implement here", "pass", "TODO()",
+        )
+        val lines = trimmed.lines().filter { it.isNotBlank() }
+        if (lines.size <= 5 && templateIndicators.any { trimmed.lowercase().contains(it.lowercase()) }) return false
+        return true
     }
 
     private suspend fun persistResponse(sessionId: UUID, responseText: String) {

@@ -1,11 +1,12 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { format } from 'date-fns'
+import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts'
 import { PageHeader } from '@/components/shared/PageHeader'
 import { CategoryBadge } from '@/components/shared/CategoryBadge'
 import { DifficultyBadge } from '@/components/shared/DifficultyBadge'
 import { ScoreDisplay } from '@/components/shared/ScoreDisplay'
-import { useInterviewList, useUserStats } from '@/hooks/useInterviews'
+import { useInterviewList, useUserStats, useReportList } from '@/hooks/useInterviews'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -199,6 +200,80 @@ function EmptyState() {
   )
 }
 
+function ProgressChart() {
+  const { data: reports } = useReportList(0, 20)
+
+  if (!reports || reports.length < 2) return null
+
+  const chartData = [...reports]
+    .reverse()
+    .map((r, i) => ({
+      name: `#${i + 1}`,
+      score: r.overallScore,
+      date: format(new Date(r.completedAt), 'MMM d'),
+    }))
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-lg">Score Trend</CardTitle>
+      </CardHeader>
+      <CardContent>
+        <ResponsiveContainer width="100%" height={200}>
+          <LineChart data={chartData}>
+            <XAxis dataKey="date" tick={{ fontSize: 11 }} />
+            <YAxis domain={[0, 10]} tick={{ fontSize: 11 }} />
+            <Tooltip />
+            <Line
+              type="monotone"
+              dataKey="score"
+              stroke="hsl(221, 83%, 53%)"
+              strokeWidth={2}
+              dot={{ r: 4 }}
+            />
+          </LineChart>
+        </ResponsiveContainer>
+      </CardContent>
+    </Card>
+  )
+}
+
+function DifficultyRecommendation() {
+  const { data: stats } = useUserStats()
+  const { data: reports } = useReportList(0, 5)
+
+  if (!stats || !reports || reports.length < 2) return null
+
+  // Look at the last 3 scores to determine recommendation
+  const recentScores = reports.slice(0, 3).map(r => r.overallScore)
+  const avgRecent = recentScores.reduce((a, b) => a + b, 0) / recentScores.length
+  const lastDifficulty = reports[0]?.difficulty ?? 'MEDIUM'
+
+  let recommendation: string | null = null
+  let description: string | null = null
+
+  if (avgRecent >= 7.5 && lastDifficulty !== 'HARD') {
+    const next = lastDifficulty === 'EASY' ? 'Medium' : 'Hard'
+    recommendation = `Try ${next} difficulty`
+    description = `You're averaging ${avgRecent.toFixed(1)}/10 — time to level up!`
+  } else if (avgRecent < 4 && lastDifficulty !== 'EASY') {
+    const next = lastDifficulty === 'HARD' ? 'Medium' : 'Easy'
+    recommendation = `Try ${next} difficulty`
+    description = `Build your confidence with easier problems first.`
+  }
+
+  if (!recommendation) return null
+
+  return (
+    <Card className="border-blue-200 bg-blue-50">
+      <CardContent className="py-4">
+        <p className="font-medium text-sm text-blue-900">{recommendation}</p>
+        <p className="text-xs text-blue-700 mt-1">{description}</p>
+      </CardContent>
+    </Card>
+  )
+}
+
 export default function DashboardPage() {
   const [page, setPage] = useState(0)
   const { data, isLoading, isFetching } = useInterviewList(page)
@@ -243,8 +318,10 @@ export default function DashboardPage() {
           </div>
 
           {/* Stats sidebar */}
-          <div>
+          <div className="space-y-6">
             <StatsCard />
+            <DifficultyRecommendation />
+            <ProgressChart />
           </div>
         </div>
       </main>

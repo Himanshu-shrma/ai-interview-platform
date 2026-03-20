@@ -25,6 +25,8 @@ export interface InterviewConfig {
   targetRole?: string
   targetCompany?: string
   durationMinutes: number
+  experienceLevel?: string
+  background?: string
 }
 
 export interface CandidateQuestion {
@@ -106,6 +108,15 @@ export interface ScoresDto {
   overall: number
 }
 
+export interface NextStep {
+  area: string
+  specificGap: string
+  evidenceFromInterview: string
+  actionItem: string
+  resource: string
+  priority: 'HIGH' | 'MEDIUM' | 'LOW'
+}
+
 export interface ReportDto {
   reportId: string
   sessionId: string
@@ -114,6 +125,7 @@ export interface ReportDto {
   strengths: string[]
   weaknesses: string[]
   suggestions: string[]
+  nextSteps: NextStep[]
   narrativeSummary: string
   dimensionFeedback: Record<string, string>
   hintsUsed: number

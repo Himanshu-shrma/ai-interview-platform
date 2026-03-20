@@ -13,6 +13,15 @@ data class ScoresDto(
     val overall: Double,
 )
 
+data class NextStepDto(
+    val area: String,
+    val specificGap: String,
+    val evidenceFromInterview: String,
+    val actionItem: String,
+    val resource: String,
+    val priority: String,
+)
+
 data class ReportDto(
     val reportId: UUID,
     val sessionId: UUID,
@@ -21,6 +30,7 @@ data class ReportDto(
     val strengths: List<String>,
     val weaknesses: List<String>,
     val suggestions: List<String>,
+    val nextSteps: List<NextStepDto>,
     val narrativeSummary: String,
     val dimensionFeedback: Map<String, String>,
     val hintsUsed: Int,

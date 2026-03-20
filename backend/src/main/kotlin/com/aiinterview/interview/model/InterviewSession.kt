@@ -19,4 +19,5 @@ data class InterviewSession(
     val createdAt: OffsetDateTime? = null,
     val lastHeartbeat: OffsetDateTime? = null,
     val currentStage: String? = "SMALL_TALK",
+    val integritySignals: String? = null,
 )

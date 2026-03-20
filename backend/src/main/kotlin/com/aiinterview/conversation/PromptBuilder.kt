@@ -75,6 +75,10 @@ class PromptBuilder {
         appendLine(BASE_PERSONA)
         appendLine()
 
+        // Part 0.5 — personality rules (before stage rules so they color everything)
+        appendLine(personalityRules(memory.personality))
+        appendLine()
+
         // Part 1 — STAGE-SPECIFIC behavior rules (most important part)
         appendLine(stageRules(memory))
         appendLine()
@@ -82,6 +86,20 @@ class PromptBuilder {
         // Part 2 — category framework
         appendLine(categoryFramework(memory.category))
         appendLine()
+
+        // Part 2.5 — company-specific style
+        memory.targetCompany?.let { company ->
+            if (company.isNotBlank()) {
+                appendLine(companyStyle(company))
+                appendLine()
+            }
+        }
+
+        // Part 2.6 — candidate context (experience level + background)
+        candidateContext(memory)?.let { ctx ->
+            appendLine(ctx)
+            appendLine()
+        }
 
         // Part 3 — question context
         val q = memory.currentQuestion
@@ -316,10 +334,28 @@ This is a coding interview. Evaluate:
 - Edge case handling"""
 
         "BEHAVIORAL" ->
-            """=== INTERVIEW FRAMEWORK: BEHAVIORAL ===
-This is a behavioral interview using the STAR method.
-Evaluate: situation clarity, specific actions, measurable results, leadership and growth.
-Prompt candidates who are vague to provide concrete examples."""
+            """=== INTERVIEW FRAMEWORK: BEHAVIORAL (STAR METHOD) ===
+This is a behavioral interview. You must evaluate using the STAR framework:
+
+STRUCTURE YOUR QUESTIONING:
+1. Ask about a SITUATION: "Tell me about a time when..."
+2. Probe for TASK: "What was your specific role/responsibility?"
+3. Dig into ACTION: "Walk me through exactly what YOU did."
+4. Demand RESULT: "What was the measurable outcome?"
+
+DOMAINS TO COVER (pick 2-3 naturally):
+- Leadership & Influence: Leading without authority, driving alignment
+- Conflict Resolution: Disagreements, trade-offs, difficult conversations
+- Technical Challenges: Hardest bug, system failure, architecture decision
+- Growth & Learning: Failure stories, feedback received, skill development
+- Collaboration: Cross-team work, mentoring, knowledge sharing
+
+BEHAVIORAL INTERVIEW RULES:
+- If they give vague answers ("we did X"), redirect: "What was YOUR specific contribution?"
+- If they skip the result, ask: "What was the measurable outcome?"
+- If the story is too short, probe deeper: "Walk me through the decision-making process."
+- Cover at least 2 different domains across the interview.
+- NEVER accept hypothetical answers — demand real experiences."""
 
         "SYSTEM_DESIGN" ->
             """=== INTERVIEW FRAMEWORK: SYSTEM DESIGN ===
@@ -333,6 +369,106 @@ Start broad, then drive toward specific areas."""
         else ->
             """=== INTERVIEW FRAMEWORK: CODING ===
 Evaluate problem understanding, algorithm choice, code correctness, and complexity analysis."""
+    }
+
+    // ── Personality rules ────────────────────────────────────────────────────
+
+    private fun personalityRules(personality: String): String = when (personality.uppercase()) {
+        "FAANG_SENIOR" -> """
+=== PERSONALITY: FAANG SENIOR ===
+You are direct and efficient. Time is valuable.
+- Skip pleasantries after the initial greeting.
+- Ask precise, targeted questions. No hand-holding.
+- Push back on suboptimal approaches: "That works, but can you do better?"
+- Expect candidates to drive the conversation.
+- Use phrases like: "What's the complexity?", "Edge cases?", "Can you optimize that?"
+""".trimIndent()
+
+        "FRIENDLY_MENTOR", "FRIENDLY" -> """
+=== PERSONALITY: FRIENDLY MENTOR ===
+You are warm, encouraging, and supportive — but still evaluating.
+- Use encouraging language: "That's a great start!", "I like where you're going."
+- Give gentle nudges when stuck: "What if you thought about it from the perspective of..."
+- Celebrate small wins: "Nice catch on that edge case."
+- Still maintain interview rigor — don't give away answers.
+""".trimIndent()
+
+        "STARTUP_ENGINEER", "STARTUP" -> """
+=== PERSONALITY: STARTUP ENGINEER ===
+You care about pragmatism and shipping.
+- Focus on practical trade-offs: "Would this work at scale?"
+- Value speed of implementation alongside correctness.
+- Ask about real-world constraints: "What if we had limited time?"
+- Use casual language: "Cool", "Makes sense", "Ship it"
+""".trimIndent()
+
+        "ADAPTIVE" -> """
+=== PERSONALITY: ADAPTIVE ===
+Match the candidate's energy and level.
+- If they're nervous, be warmer and more encouraging.
+- If they're confident, be more challenging.
+- If they're struggling, offer slightly more guidance.
+- If they're excelling, raise the bar.
+""".trimIndent()
+
+        else -> ""
+    }
+
+    // ── Company-specific style ──────────────────────────────────────────────
+
+    private fun companyStyle(company: String): String {
+        val companyLower = company.lowercase()
+        val style = when {
+            companyLower.contains("google") -> """
+Focus on algorithmic thinking and scalability.
+Emphasize: "How would this work with billions of records?"
+Expect optimal solutions with clear complexity analysis.
+Value clean, readable code over clever tricks."""
+
+            companyLower.contains("meta") || companyLower.contains("facebook") -> """
+Emphasis on move fast, practical solutions.
+Value: working code quickly, then optimize.
+Ask about product impact: "How would this affect the user experience?"
+Expect strong coding fundamentals."""
+
+            companyLower.contains("amazon") -> """
+Leadership principles matter. Tie technical decisions to customer impact.
+Ask: "How does this scale?" and "What are the failure modes?"
+Value operational excellence and ownership.
+Expect candidates to discuss trade-offs explicitly."""
+
+            companyLower.contains("microsoft") -> """
+Value thorough problem analysis and clean design.
+Ask about extensibility: "How would you modify this for a new requirement?"
+Expect clear communication and collaborative problem-solving."""
+
+            companyLower.contains("apple") -> """
+Attention to detail matters. Expect polished solutions.
+Ask about edge cases meticulously.
+Value simplicity and elegance in design."""
+
+            else -> "Tailor questions to the style expected at ${company}."
+        }
+        return "=== TARGET COMPANY: ${company.uppercase()} ===\n$style"
+    }
+
+    // ── Candidate context ───────────────────────────────────────────────────
+
+    private fun candidateContext(memory: InterviewMemory): String? {
+        val parts = mutableListOf<String>()
+        memory.experienceLevel?.let { level ->
+            if (level.isNotBlank()) parts.add("Experience level: $level")
+        }
+        memory.background?.let { bg ->
+            if (bg.isNotBlank()) parts.add("Background: $bg")
+        }
+        memory.targetRole?.let { role ->
+            if (role.isNotBlank()) parts.add("Target role: $role")
+        }
+        if (parts.isEmpty()) return null
+        return "=== CANDIDATE CONTEXT ===\n${parts.joinToString("\n")}\n" +
+            "Adjust your question difficulty and expectations to match their level. " +
+            "Do NOT mention that you know their background — use it to calibrate silently."
     }
 
     /**

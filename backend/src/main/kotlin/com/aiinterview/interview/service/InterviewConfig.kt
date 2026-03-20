@@ -13,6 +13,8 @@ data class InterviewConfig(
     val targetRole: String? = null,
     val targetCompany: String? = null,
     val durationMinutes: Int = 45,
+    val experienceLevel: String? = null,
+    val background: String? = null,
 ) {
     /**
      * Maps InterviewCategory → DB InterviewType string for interview_sessions.type column.

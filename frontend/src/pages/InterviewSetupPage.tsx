@@ -87,6 +87,31 @@ const difficulties: { value: Difficulty; label: string; color: string }[] = [
   { value: 'HARD', label: 'Hard', color: 'bg-red-500' },
 ]
 
+const experienceLevels = [
+  { value: 'junior', label: 'Junior (0-2 years)' },
+  { value: 'mid', label: 'Mid-Level (2-5 years)' },
+  { value: 'senior', label: 'Senior (5-10 years)' },
+  { value: 'staff', label: 'Staff+ (10+ years)' },
+]
+
+const DIFFICULTY_PREVIEWS: Record<Difficulty, { description: string; examples: string; timeHint: string }> = {
+  EASY: {
+    description: 'Straightforward problems testing fundamental concepts.',
+    examples: 'Two Sum, Valid Parentheses, Merge Sorted Arrays',
+    timeHint: 'Most candidates solve these in 15-20 minutes.',
+  },
+  MEDIUM: {
+    description: 'Problems requiring creative thinking and solid DS&A knowledge.',
+    examples: 'LRU Cache, Binary Tree Level Order, 3Sum',
+    timeHint: 'Expect 25-35 minutes. Optimization follow-ups likely.',
+  },
+  HARD: {
+    description: 'Complex problems requiring advanced algorithms and edge case mastery.',
+    examples: 'Median of Two Sorted Arrays, Word Ladder, Trapping Rain Water',
+    timeHint: 'These take 30-45 minutes. Brute force first, then optimize.',
+  },
+}
+
 const durations = [30, 45, 60]
 
 const needsLanguage = (cat?: InterviewCategory) => cat === 'CODING' || cat === 'DSA'
@@ -99,6 +124,8 @@ export default function InterviewSetupPage() {
   const [targetRole, setTargetRole] = useState('')
   const [targetCompany, setTargetCompany] = useState('')
   const [durationMinutes, setDurationMinutes] = useState(45)
+  const [experienceLevel, setExperienceLevel] = useState('')
+  const [background, setBackground] = useState('')
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
 
   const { data: languages } = useLanguages()
@@ -120,6 +147,8 @@ export default function InterviewSetupPage() {
         targetRole: targetRole.trim() || undefined,
         targetCompany: targetCompany.trim() || undefined,
         durationMinutes,
+        experienceLevel: experienceLevel || undefined,
+        background: background.trim() || undefined,
       },
       {
         onError: (err) => {
@@ -202,6 +231,21 @@ export default function InterviewSetupPage() {
             </div>
           </section>
 
+          {/* Difficulty preview */}
+          {difficulty && needsLanguage(category) && (
+            <Card className="animate-in fade-in slide-in-from-top-2 duration-200 border-muted">
+              <CardContent className="py-3 space-y-1">
+                <p className="text-sm font-medium">{DIFFICULTY_PREVIEWS[difficulty].description}</p>
+                <p className="text-xs text-muted-foreground">
+                  Examples: {DIFFICULTY_PREVIEWS[difficulty].examples}
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  {DIFFICULTY_PREVIEWS[difficulty].timeHint}
+                </p>
+              </CardContent>
+            </Card>
+          )}
+
           {/* Target Role */}
           <section>
             <Label htmlFor="targetRole" className="text-sm font-medium mb-2 block">
@@ -275,6 +319,43 @@ export default function InterviewSetupPage() {
               </Select>
             </section>
           )}
+
+          {/* Experience Level */}
+          <section>
+            <Label className="text-sm font-medium mb-2 block">
+              Experience Level <span className="text-muted-foreground font-normal">(optional)</span>
+            </Label>
+            <Select value={experienceLevel} onValueChange={setExperienceLevel}>
+              <SelectTrigger>
+                <SelectValue placeholder="Select your experience level" />
+              </SelectTrigger>
+              <SelectContent>
+                {experienceLevels.map((lvl) => (
+                  <SelectItem key={lvl.value} value={lvl.value}>
+                    {lvl.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </section>
+
+          {/* Background */}
+          <section>
+            <Label htmlFor="background" className="text-sm font-medium mb-2 block">
+              Background <span className="text-muted-foreground font-normal">(optional)</span>
+            </Label>
+            <textarea
+              id="background"
+              placeholder="e.g. 3 years of Python/Django, strong in backend, weaker in frontend..."
+              value={background}
+              onChange={(e) => setBackground(e.target.value)}
+              rows={3}
+              className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            />
+            <p className="text-xs text-muted-foreground mt-1">
+              Helps the AI calibrate questions to your level
+            </p>
+          </section>
 
           {/* Duration */}
           <section>

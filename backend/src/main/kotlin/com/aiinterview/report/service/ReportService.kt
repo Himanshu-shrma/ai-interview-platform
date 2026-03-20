@@ -7,6 +7,7 @@ import com.aiinterview.interview.service.InterviewConfig
 import com.aiinterview.interview.service.RedisMemoryService
 import com.aiinterview.interview.ws.OutboundMessage
 import com.aiinterview.interview.ws.WsSessionRegistry
+import com.aiinterview.report.dto.NextStepDto
 import com.aiinterview.report.dto.ReportDto
 import com.aiinterview.report.dto.ReportSummaryDto
 import com.aiinterview.report.dto.ScoresDto
@@ -112,6 +113,7 @@ class ReportService(
         val strengthsJson         = objectMapper.writeValueAsString(evalResult.strengths)
         val weaknessesJson        = objectMapper.writeValueAsString(evalResult.weaknesses)
         val suggestionsJson       = objectMapper.writeValueAsString(evalResult.suggestions)
+        val nextStepsJson         = objectMapper.writeValueAsString(evalResult.nextSteps)
         val dimensionFeedbackJson = objectMapper.writeValueAsString(evalResult.dimensionFeedback)
 
         val now = OffsetDateTime.now()
@@ -136,6 +138,7 @@ class ReportService(
                     narrativeSummary     = evalResult.narrativeSummary,
                     dimensionFeedback    = dimensionFeedbackJson,
                     hintsUsed            = memory.hintsGiven,
+                    nextSteps            = nextStepsJson,
                     completedAt          = now,
                 ),
             ).awaitSingle()
@@ -301,6 +304,7 @@ class ReportService(
         val strengthsList  = parseJsonList(report.strengths)
         val weaknessesList = parseJsonList(report.weaknesses)
         val suggestionList = parseJsonList(report.suggestions)
+        val nextStepsList  = parseNextSteps(report.nextSteps)
         val dimFeedback    = parseJsonMap(report.dimensionFeedback)
 
         val durationSeconds = session?.durationSecs?.toLong()
@@ -326,6 +330,7 @@ class ReportService(
             strengths           = strengthsList,
             weaknesses          = weaknessesList,
             suggestions         = suggestionList,
+            nextSteps           = nextStepsList,
             narrativeSummary    = report.narrativeSummary ?: "",
             dimensionFeedback   = dimFeedback,
             hintsUsed           = report.hintsUsed,
@@ -360,6 +365,24 @@ class ReportService(
             objectMapper.readValue(json, object : TypeReference<Map<String, String>>() {})
         } catch (e: Exception) {
             emptyMap()
+        }
+    }
+
+    private fun parseNextSteps(json: String?): List<NextStepDto> {
+        if (json.isNullOrBlank()) return emptyList()
+        return try {
+            objectMapper.readValue(json, object : TypeReference<List<NextStep>>() {}).map {
+                NextStepDto(
+                    area = it.area,
+                    specificGap = it.specificGap,
+                    evidenceFromInterview = it.evidenceFromInterview,
+                    actionItem = it.actionItem,
+                    resource = it.resource,
+                    priority = it.priority,
+                )
+            }
+        } catch (e: Exception) {
+            emptyList()
         }
     }
 }

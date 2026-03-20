@@ -72,6 +72,52 @@ export default function InterviewPage() {
   const [editorHighlighted, setEditorHighlighted] = useState(false)
   const [codeTemplates, setCodeTemplates] = useState<Record<string, string> | null>(null)
 
+  // Integrity signal tracking (Feature 8)
+  const integritySignalsRef = useRef<{ type: string; timestamp: number; metadata?: Record<string, unknown> }[]>([])
+
+  useEffect(() => {
+    if (!sessionId) return
+
+    const handleVisibilityChange = () => {
+      if (document.hidden) {
+        integritySignalsRef.current.push({ type: 'TAB_SWITCH', timestamp: Date.now() })
+      }
+    }
+
+    const handlePaste = (e: ClipboardEvent) => {
+      const text = e.clipboardData?.getData('text') ?? ''
+      if (text.length > 20) {
+        integritySignalsRef.current.push({
+          type: 'PASTE_DETECTED',
+          timestamp: Date.now(),
+          metadata: { length: text.length },
+        })
+      }
+    }
+
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+    document.addEventListener('paste', handlePaste)
+
+    // Flush signals every 30 seconds
+    const flushInterval = setInterval(() => {
+      const signals = integritySignalsRef.current
+      if (signals.length > 0 && sessionId) {
+        integritySignalsRef.current = []
+        fetch('/api/v1/integrity', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ sessionId, signals }),
+        }).catch(() => { /* best effort */ })
+      }
+    }, 30_000)
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
+      document.removeEventListener('paste', handlePaste)
+      clearInterval(flushInterval)
+    }
+  }, [sessionId])
+
   // Track whether AI is mid-stream
   const isStreamingRef = useRef(false)
 
