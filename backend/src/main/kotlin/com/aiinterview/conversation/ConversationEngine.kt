@@ -48,6 +48,8 @@ class ConversationEngine(
     private val objectMapper: ObjectMapper,
     @Lazy private val agentOrchestrator: AgentOrchestrator,
     @Lazy private val reportService: ReportService,
+    private val smartOrchestrator: SmartOrchestrator,
+    private val stateContextBuilder: StateContextBuilder,
 ) {
     private val log = LoggerFactory.getLogger(ConversationEngine::class.java)
 
@@ -82,17 +84,33 @@ class ConversationEngine(
         // State: CANDIDATE_RESPONDING
         transition(sessionId, InterviewState.CandidateResponding)
 
-        // Stream AI response
-        interviewerAgent.streamResponse(sessionId, memory, content)
+        // Stream AI response (returns the completed response text)
+        val aiResponse = interviewerAgent.streamResponse(sessionId, memory, content)
 
         // State: AI_ANALYZING
         transition(sessionId, InterviewState.AiAnalyzing)
 
-        // Background analysis (fire-and-forget — do NOT await)
+        // ── Phase 2: SmartOrchestrator + legacy AgentOrchestrator (fire-and-forget) ──
         val handler = CoroutineExceptionHandler { _, e ->
-            log.error("AgentOrchestrator failed for session {}", sessionId, e)
+            log.error("Background orchestration failed for session {}", sessionId, e)
+        }
+        val stateCtx = try {
+            stateContextBuilder.build(sessionId)
+        } catch (e: Exception) {
+            log.warn("StateContextBuilder failed for background orchestration {}: {}", sessionId, e.message)
+            null
         }
         backgroundScope.launch(handler) {
+            // SmartOrchestrator: LLM-driven analysis (Phase 2)
+            if (stateCtx != null) {
+                smartOrchestrator.orchestrate(
+                    sessionId = sessionId,
+                    candidateMessage = content,
+                    aiResponse = aiResponse,
+                    ctx = stateCtx,
+                )
+            }
+            // Legacy orchestrator: handles CodingChallenge/Evaluating transitions
             agentOrchestrator.analyzeAndTransition(sessionId, content)
         }
     }

@@ -142,6 +142,32 @@ class RedisMemoryService(
     suspend fun memoryExists(sessionId: UUID): Boolean =
         redisTemplate.hasKey(memoryKey(sessionId)).awaitSingle()
 
+    // ── Smart orchestrator helpers ──────────────────────────────────────────
+
+    suspend fun appendAgentNote(sessionId: UUID, note: String) {
+        val memory = getMemory(sessionId)
+        val existing = memory.agentNotes
+        val updated = if (existing.isBlank()) note else "$existing\n• $note"
+        val trimmed = if (updated.length > 500) updated.takeLast(500) else updated
+        saveMemory(sessionId, memory.copy(agentNotes = trimmed))
+    }
+
+    suspend fun setComplexityDiscussed(sessionId: UUID, value: Boolean) {
+        updateMemory(sessionId) { it.copy(complexityDiscussed = value) }
+    }
+
+    suspend fun setEdgeCasesCovered(sessionId: UUID, count: Int) {
+        updateMemory(sessionId) { it.copy(edgeCasesCovered = count) }
+    }
+
+    suspend fun updateStage(sessionId: UUID, stage: String) {
+        updateMemory(sessionId) { it.copy(interviewStage = stage) }
+    }
+
+    suspend fun incrementQuestionIndex(sessionId: UUID) {
+        updateMemory(sessionId) { it.copy(currentQuestionIndex = it.currentQuestionIndex + 1) }
+    }
+
     // ── Private helpers ───────────────────────────────────────────────────────
 
     private suspend fun saveMemory(sessionId: UUID, memory: InterviewMemory) {

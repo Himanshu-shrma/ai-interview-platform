@@ -70,7 +70,13 @@ class PromptBuilder {
      *   Part 5 — conversation history (dynamic per turn)
      *   Part 6 — candidate state (dynamic per turn)
      */
-    fun buildSystemPrompt(memory: InterviewMemory, messageType: MessageType? = null): String = buildString {
+    fun buildSystemPrompt(
+        memory: InterviewMemory,
+        messageType: MessageType? = null,
+        stateCtx: StateContext? = null,
+        codeDetails: String? = null,
+        testResultSummary: String? = null,
+    ): String = buildString {
         // Part 0 — base persona
         appendLine(BASE_PERSONA)
         appendLine()
@@ -98,6 +104,28 @@ class PromptBuilder {
         // Part 2.6 — candidate context (experience level + background)
         candidateContext(memory)?.let { ctx ->
             appendLine(ctx)
+            appendLine()
+        }
+
+        // Part 2.7 — LIVE STATE BLOCK (Phase 1 — fresh from StateContextBuilder)
+        stateCtx?.let { sc ->
+            appendLine(buildStateBlock(sc))
+            appendLine()
+        }
+
+        // Part 2.8 — Code details from ToolContextService (Phase 3)
+        codeDetails?.let { cd ->
+            appendLine("=== CANDIDATE'S CODE ===")
+            appendLine("```")
+            appendLine(cd)
+            appendLine("```")
+            appendLine()
+        }
+
+        // Part 2.9 — Test results if available (Phase 3)
+        testResultSummary?.let { tr ->
+            appendLine("=== TEST RESULTS ===")
+            appendLine(tr)
             appendLine()
         }
 
@@ -469,6 +497,66 @@ Value simplicity and elegance in design."""
         return "=== CANDIDATE CONTEXT ===\n${parts.joinToString("\n")}\n" +
             "Adjust your question difficulty and expectations to match their level. " +
             "Do NOT mention that you know their background — use it to calibrate silently."
+    }
+
+    // ── Live state block (Phase 1) ─────────────────────────────────────────
+
+    fun buildStateBlock(ctx: StateContext): String = buildString {
+        appendLine("=== LIVE INTERVIEW STATE ===")
+
+        // Time
+        appendLine("TIME: ${ctx.remainingMinutes} min remaining")
+        when {
+            ctx.isOvertime -> appendLine("OVERTIME — end the interview NOW")
+            ctx.shouldWrapUp -> appendLine("5 MIN LEFT — begin wrapping up")
+        }
+
+        // Code — THE KEY FIX
+        appendLine()
+        appendLine("CODE EDITOR:")
+        when {
+            ctx.isOvertime -> appendLine("-> Irrelevant, interview ending")
+            !ctx.hasMeaningfulCode -> {
+                appendLine("-> EMPTY — candidate has not written real code")
+                appendLine("-> RULE: Do NOT ask about time complexity")
+                appendLine("-> RULE: Do NOT ask about space complexity")
+                appendLine("-> RULE: Do NOT ask about edge cases")
+                appendLine("-> RULE: Do NOT say 'your solution'")
+                appendLine("-> If approach explained: say 'go ahead and code it'")
+            }
+            else -> {
+                appendLine("-> HAS CODE: ${ctx.codeLineCount} lines (${ctx.codeLanguage ?: "unknown"})")
+                if (ctx.testsPassed != null && ctx.testsTotal != null) {
+                    appendLine("-> TESTS: ${ctx.testsPassed}/${ctx.testsTotal} passing")
+                    if (ctx.testsPassed < ctx.testsTotal) {
+                        appendLine("-> Bug exists — do NOT reveal which test fails")
+                        appendLine("-> Ask them to trace through a failing case")
+                    }
+                }
+            }
+        }
+
+        // Checklist
+        appendLine()
+        appendLine("CHECKLIST:")
+        appendLine("-> Complexity discussed: ${ctx.complexityDiscussed}")
+        appendLine("-> Edge cases covered: ${ctx.edgeCasesCovered}")
+        appendLine("-> Hints given: ${ctx.hintsGiven}")
+
+        // Agent notes
+        if (ctx.agentNotes.isNotBlank()) {
+            appendLine()
+            appendLine("YOUR NOTES ABOUT THIS CANDIDATE:")
+            appendLine(ctx.agentNotes)
+        }
+
+        // Company context
+        ctx.targetCompany?.takeIf { it.isNotBlank() }?.let {
+            appendLine()
+            appendLine("TARGET COMPANY: $it — calibrate bar accordingly")
+        }
+
+        appendLine("=============================")
     }
 
     /**

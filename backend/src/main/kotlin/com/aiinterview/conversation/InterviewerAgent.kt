@@ -53,16 +53,29 @@ class InterviewerAgent(
     private val registry: WsSessionRegistry,
     private val redisMemoryService: RedisMemoryService,
     private val conversationMessageRepository: ConversationMessageRepository,
+    private val stateContextBuilder: StateContextBuilder,
+    private val toolContextService: ToolContextService,
 ) {
     private val log = LoggerFactory.getLogger(InterviewerAgent::class.java)
 
+    /** Returns the AI response text (for use by SmartOrchestrator), or empty if failed. */
     suspend fun streamResponse(
         sessionId: UUID,
         memory: InterviewMemory,
         userMessage: String,
-    ) {
+    ): String {
+        // ── Phase 1: Fetch FRESH state from Redis+DB ──
+        val stateCtx = try {
+            stateContextBuilder.build(sessionId)
+        } catch (e: Exception) {
+            log.warn("StateContextBuilder failed for {}, proceeding without: {}", sessionId, e.message)
+            null
+        }
+
         // ── CODING GATE — skip LLM when stage=CODING and no real code ──
-        if (memory.interviewStage == "CODING" && !hasMeaningfulCode(memory)) {
+        val codingStage = stateCtx?.stage ?: memory.interviewStage
+        val hasCode = stateCtx?.hasMeaningfulCode ?: hasMeaningfulCode(memory)
+        if (codingStage == "CODING" && !hasCode) {
             val msgLower = userMessage.lowercase()
             val cannedResponse = when {
                 userMessage.length > 150 ->
@@ -77,14 +90,30 @@ class InterviewerAgent(
             }
             streamStaticResponse(sessionId, cannedResponse)
             persistResponse(sessionId, cannedResponse)
-            return
+            return cannedResponse
         }
 
+        // ── Phase 3: Fetch stage-specific tool context ──
+        val toolCtx = try {
+            toolContextService.fetchForStage(sessionId, codingStage)
+        } catch (e: Exception) {
+            log.warn("ToolContextService failed for {}: {}", sessionId, e.message)
+            null
+        }
+        val effectiveStateCtx = toolCtx?.stateContext ?: stateCtx
+
         val messageType = classifyMessage(userMessage)
-        val systemPrompt = promptBuilder.buildSystemPrompt(memory, messageType)
+        val systemPrompt = promptBuilder.buildSystemPrompt(
+            memory = memory,
+            messageType = messageType,
+            stateCtx = effectiveStateCtx,
+            codeDetails = toolCtx?.codeDetails,
+            testResultSummary = toolCtx?.testResultSummary,
+        )
         val fullResponse = StringBuilder()
 
-        val maxTokens = maxTokensFor(memory.interviewStage, messageType)
+        val effectiveStage = effectiveStateCtx?.stage ?: memory.interviewStage
+        val maxTokens = maxTokensFor(effectiveStage, messageType)
         val success = tryStreaming(sessionId, systemPrompt, userMessage, fullResponse, maxTokens)
 
         if (!success) {
@@ -92,7 +121,7 @@ class InterviewerAgent(
             val ok = tryFallback(sessionId, systemPrompt, userMessage, fullResponse)
             if (!ok) {
                 registry.sendMessage(sessionId, OutboundMessage.Error("AI_ERROR", "Interview assistant unavailable"))
-                return
+                return ""
             }
         }
 
@@ -103,6 +132,7 @@ class InterviewerAgent(
             persistResponse(sessionId, responseText)
             updateInterviewStage(sessionId, memory, userMessage, responseText)
         }
+        return responseText
     }
 
     private suspend fun tryStreaming(

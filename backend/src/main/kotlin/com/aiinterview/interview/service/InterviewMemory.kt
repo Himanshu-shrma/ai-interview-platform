@@ -29,8 +29,27 @@ data class InterviewMemory(
     val targetRole: String? = null,
     val experienceLevel: String? = null,
     val background: String? = null,
+    val complexityDiscussed: Boolean = false,
+    val edgeCasesCovered: Int = 0,
+    val agentNotes: String = "",
+    val lastTestResult: TestResultCache? = null,
     val createdAt: Instant = Instant.now(),
     val lastActivityAt: Instant = Instant.now(),
+)
+
+@JsonIgnoreProperties(ignoreUnknown = true)
+data class TestResultCache(
+    val passed: Int = 0,
+    val total: Int = 0,
+    val failedCases: List<FailedCase>? = null,
+    val ranAt: Instant = Instant.now(),
+)
+
+@JsonIgnoreProperties(ignoreUnknown = true)
+data class FailedCase(
+    val input: String = "",
+    val expected: String = "",
+    val actual: String = "",
 )
 
 @JsonIgnoreProperties(ignoreUnknown = true)
