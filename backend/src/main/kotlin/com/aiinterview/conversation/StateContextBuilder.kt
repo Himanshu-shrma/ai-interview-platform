@@ -13,6 +13,7 @@ import java.time.Instant
 import java.util.UUID
 
 data class StateContext(
+    val category: String,
     val hasMeaningfulCode: Boolean,
     val codeLanguage: String?,
     val codeLineCount: Int,
@@ -70,6 +71,7 @@ class StateContextBuilder(
             && code.lines().count { it.isNotBlank() } > 3
 
         return StateContext(
+            category = memory.category,
             hasMeaningfulCode = hasMeaningfulCode,
             codeLanguage = memory.programmingLanguage,
             codeLineCount = code?.lines()?.size ?: 0,

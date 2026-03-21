@@ -10,10 +10,12 @@ import com.aiinterview.interview.ws.OutboundMessage
 import com.aiinterview.interview.ws.WsSessionRegistry
 import com.aiinterview.report.service.ReportService
 import com.fasterxml.jackson.databind.ObjectMapper
-import kotlinx.coroutines.CoroutineExceptionHandler
+import jakarta.annotation.PreDestroy
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.reactor.awaitSingle
 import kotlinx.coroutines.withContext
@@ -21,6 +23,7 @@ import org.slf4j.LoggerFactory
 import org.springframework.context.annotation.Lazy
 import org.springframework.stereotype.Service
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Central orchestrator for the AI interview conversation.
@@ -53,8 +56,21 @@ class ConversationEngine(
 ) {
     private val log = LoggerFactory.getLogger(ConversationEngine::class.java)
 
-    /** Background scope for fire-and-forget agent tasks (analysis, hint generation, reports). */
-    private val backgroundScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    /** Per-session scopes — cancelled when interview ends or WS disconnects. */
+    private val sessionScopes = ConcurrentHashMap<UUID, CoroutineScope>()
+
+    private fun getSessionScope(sessionId: UUID): CoroutineScope =
+        sessionScopes.getOrPut(sessionId) { CoroutineScope(SupervisorJob() + Dispatchers.IO) }
+
+    fun cancelSessionScope(sessionId: UUID) {
+        sessionScopes.remove(sessionId)?.cancel()
+    }
+
+    @PreDestroy
+    fun destroy() {
+        sessionScopes.values.forEach { it.cancel() }
+        sessionScopes.clear()
+    }
 
     // ── Public API ────────────────────────────────────────────────────────────
 
@@ -91,27 +107,30 @@ class ConversationEngine(
         transition(sessionId, InterviewState.AiAnalyzing)
 
         // ── Phase 2: SmartOrchestrator + legacy AgentOrchestrator (fire-and-forget) ──
-        val handler = CoroutineExceptionHandler { _, e ->
-            log.error("Background orchestration failed for session {}", sessionId, e)
-        }
         val stateCtx = try {
             stateContextBuilder.build(sessionId)
         } catch (e: Exception) {
             log.warn("StateContextBuilder failed for background orchestration {}: {}", sessionId, e.message)
             null
         }
-        backgroundScope.launch(handler) {
-            // SmartOrchestrator: LLM-driven analysis (Phase 2)
-            if (stateCtx != null) {
-                smartOrchestrator.orchestrate(
-                    sessionId = sessionId,
-                    candidateMessage = content,
-                    aiResponse = aiResponse,
-                    ctx = stateCtx,
-                )
+        getSessionScope(sessionId).launch {
+            try {
+                // SmartOrchestrator: LLM-driven analysis (Phase 2)
+                if (stateCtx != null) {
+                    smartOrchestrator.orchestrate(
+                        sessionId = sessionId,
+                        candidateMessage = content,
+                        aiResponse = aiResponse,
+                        ctx = stateCtx,
+                    )
+                }
+                // Legacy orchestrator: handles CodingChallenge/Evaluating transitions
+                agentOrchestrator.analyzeAndTransition(sessionId, content)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                log.error("Background orchestration failed for session {}: {}", sessionId, e.message)
             }
-            // Legacy orchestrator: handles CodingChallenge/Evaluating transitions
-            agentOrchestrator.analyzeAndTransition(sessionId, content)
         }
     }
 
@@ -172,11 +191,16 @@ class ConversationEngine(
      */
     suspend fun forceEndInterview(sessionId: UUID) {
         transition(sessionId, InterviewState.Evaluating)
-        val handler = CoroutineExceptionHandler { _, e ->
-            log.error("Report generation failed for force-ended session {}", sessionId, e)
-        }
-        backgroundScope.launch(handler) {
-            reportService.generateAndSaveReport(sessionId)
+        getSessionScope(sessionId).launch {
+            try {
+                reportService.generateAndSaveReport(sessionId)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                log.error("Report generation failed for force-ended session {}: {}", sessionId, e.message)
+            } finally {
+                cancelSessionScope(sessionId)
+            }
         }
     }
 

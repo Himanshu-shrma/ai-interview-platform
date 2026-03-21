@@ -6,6 +6,8 @@ import com.aiinterview.conversation.HintGenerator
 import com.aiinterview.conversation.InterviewState
 import com.aiinterview.interview.repository.ConversationMessageRepository
 import com.aiinterview.interview.repository.InterviewSessionRepository
+import com.aiinterview.interview.repository.QuestionRepository
+import com.aiinterview.interview.repository.SessionQuestionRepository
 import com.aiinterview.interview.service.RedisMemoryService
 import com.aiinterview.report.repository.EvaluationReportRepository
 import com.fasterxml.jackson.databind.ObjectMapper
@@ -37,12 +39,31 @@ class InterviewWebSocketHandler(
     private val conversationMessageRepository: ConversationMessageRepository,
     private val interviewSessionRepository: InterviewSessionRepository,
     private val evaluationReportRepository: EvaluationReportRepository,
+    private val sessionQuestionRepository: SessionQuestionRepository,
+    private val questionRepository: QuestionRepository,
 ) : WebSocketHandler {
 
     /** Fire-and-forget scope for code execution (same pattern as ConversationEngine). */
     private val codeScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     private val log = LoggerFactory.getLogger(InterviewWebSocketHandler::class.java)
+
+    // ── Input validation ──
+    companion object {
+        private const val MAX_MESSAGE_LENGTH = 2000
+        private const val MAX_CODE_LENGTH = 51200  // 50KB
+        private const val MESSAGE_RATE_LIMIT_MS = 1000L
+    }
+
+    private val messageCooldowns = java.util.concurrent.ConcurrentHashMap<UUID, Long>()
+
+    private fun isRateLimited(sessionId: UUID): Boolean {
+        val now = System.currentTimeMillis()
+        val lastMessage = messageCooldowns[sessionId] ?: 0L
+        if (now - lastMessage < MESSAGE_RATE_LIMIT_MS) return true
+        messageCooldowns[sessionId] = now
+        return false
+    }
 
     override fun handle(session: WebSocketSession): Mono<Void> {
         // Primary: exchange attributes set by WsAuthHandshakeInterceptor.
@@ -141,12 +162,24 @@ class InterviewWebSocketHandler(
                 handleReconnect(sessionId, memory)
             }
         } else if (dbSession != null && dbSession.status == "ACTIVE") {
-            // Redis expired but DB says ACTIVE — mark as abandoned
-            withContext(Dispatchers.IO) {
-                interviewSessionRepository.save(dbSession.copy(status = "ABANDONED")).awaitSingle()
+            // Redis expired but DB says ACTIVE — try to reconstruct from DB
+            val recovered = redisMemoryService.getMemoryWithFallback(
+                sessionId,
+                interviewSessionRepository,
+                sessionQuestionRepository,
+                conversationMessageRepository,
+                questionRepository,
+            )
+            if (recovered != null) {
+                handleReconnect(sessionId, recovered)
+                log.info("Recovered session {} from DB after Redis miss", sessionId)
+            } else {
+                withContext(Dispatchers.IO) {
+                    interviewSessionRepository.save(dbSession.copy(status = "ABANDONED")).awaitSingle()
+                }
+                registry.sendMessage(sessionId, OutboundMessage.Error("SESSION_EXPIRED", "Session memory expired. Please start a new interview."))
+                log.warn("Redis memory expired for active session {}; marked abandoned", sessionId)
             }
-            registry.sendMessage(sessionId, OutboundMessage.Error("SESSION_EXPIRED", "Session memory expired. Please start a new interview."))
-            log.warn("Redis memory expired for active session {}; marked abandoned", sessionId)
         } else {
             registry.sendMessage(sessionId, OutboundMessage.Error("SESSION_NOT_FOUND", "Session not found or expired"))
             log.warn("WS connect with no memory: sessionId={}", sessionId)
@@ -228,6 +261,28 @@ class InterviewWebSocketHandler(
 
             "CANDIDATE_MESSAGE" -> {
                 val msg = objectMapper.treeToValue(tree, InboundMessage.CandidateMessage::class.java)
+
+                // ── Input validation ──
+                if (msg.text.isNullOrBlank()) {
+                    registry.sendMessage(sessionId, OutboundMessage.Error("INVALID_MESSAGE", "Message cannot be empty"))
+                    return
+                }
+                if (msg.text.length > MAX_MESSAGE_LENGTH) {
+                    registry.sendMessage(sessionId, OutboundMessage.Error("INVALID_MESSAGE", "Message too long (max $MAX_MESSAGE_LENGTH characters)"))
+                    return
+                }
+                msg.codeSnapshot?.content?.let { code ->
+                    if (code.length > MAX_CODE_LENGTH) {
+                        registry.sendMessage(sessionId, OutboundMessage.Error("INVALID_MESSAGE", "Code content too large (max 50KB)"))
+                        return
+                    }
+                }
+                // ── Rate limiting ──
+                if (isRateLimited(sessionId)) {
+                    registry.sendMessage(sessionId, OutboundMessage.Error("RATE_LIMITED", "Please wait before sending another message"))
+                    return
+                }
+
                 // Sync code snapshot from editor into memory (if provided)
                 msg.codeSnapshot?.let { snap ->
                     if (snap.hasMeaningfulCode && !snap.content.isNullOrBlank()) {
@@ -301,6 +356,7 @@ class InterviewWebSocketHandler(
 
     private fun onDisconnect(sessionId: UUID) {
         registry.deregister(sessionId)
+        messageCooldowns.remove(sessionId)
         WsAuthHandshakeInterceptor.removeAuthenticatedSession(sessionId)
         log.info("WS disconnected: sessionId={}", sessionId)
     }

@@ -7,6 +7,8 @@ import com.aiinterview.shared.ai.ModelConfig
 import com.aiinterview.shared.ai.ResponseFormat
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties
 import com.fasterxml.jackson.databind.ObjectMapper
+import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.withTimeout
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Component
 
@@ -128,7 +130,20 @@ class EvaluationAgent(
         }
     }
 
+    private val evaluationTimeoutMs = 60_000L
+
     suspend fun evaluate(memory: InterviewMemory): EvaluationResult {
+        return try {
+            withTimeout(evaluationTimeoutMs) {
+                attemptEvaluation(memory)
+            }
+        } catch (e: TimeoutCancellationException) {
+            log.error("Evaluation timed out for session {} after {}ms", memory.sessionId, evaluationTimeoutMs)
+            defaultResult()
+        }
+    }
+
+    private suspend fun attemptEvaluation(memory: InterviewMemory): EvaluationResult {
         val userPrompt = buildUserPrompt(memory)
         val systemPrompt = systemPromptFor(memory.category)
 

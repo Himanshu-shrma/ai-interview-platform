@@ -21,15 +21,18 @@ class ToolContextService(
 ) {
     suspend fun fetchForStage(sessionId: UUID, stage: String): ToolContext {
         val base = stateContextBuilder.build(sessionId)
+        val isCodingInterview = base.category.uppercase() in setOf("CODING", "DSA")
 
-        return when (stage) {
-            "CODING" -> ToolContext(
+        return when {
+            // CODING stage — only relevant for coding interviews
+            stage == "CODING" && isCodingInterview -> ToolContext(
                 stateContext = base,
                 codeDetails = null,     // AI should be silent during coding
                 testResultSummary = null,
             )
 
-            "REVIEW" -> {
+            // REVIEW stage — only fetch code/tests for coding interviews
+            stage == "REVIEW" && isCodingInterview -> {
                 val memory = redisMemoryService.getMemory(sessionId)
                 val code = memory.currentCode?.take(2000)
 
@@ -54,7 +57,8 @@ class ToolContextService(
                 )
             }
 
-            "APPROACH" -> ToolContext(
+            // APPROACH stage — only show code status for coding interviews
+            stage == "APPROACH" && isCodingInterview -> ToolContext(
                 stateContext = base,
                 codeDetails = if (base.hasMeaningfulCode)
                     "CODE EXISTS (${base.codeLineCount} lines of ${base.codeLanguage ?: "unknown"})"
@@ -62,6 +66,7 @@ class ToolContextService(
                 testResultSummary = null,
             )
 
+            // All other stages / non-coding interview types — no code context
             else -> ToolContext(
                 stateContext = base,
                 codeDetails = null,

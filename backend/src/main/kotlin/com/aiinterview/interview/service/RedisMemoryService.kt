@@ -1,9 +1,16 @@
 package com.aiinterview.interview.service
 
 import com.aiinterview.interview.dto.InternalQuestionDto
+import com.aiinterview.interview.dto.toInternalDto
+import com.aiinterview.interview.repository.ConversationMessageRepository
+import com.aiinterview.interview.repository.InterviewSessionRepository
+import com.aiinterview.interview.repository.SessionQuestionRepository
+import com.aiinterview.interview.repository.QuestionRepository
 import com.fasterxml.jackson.databind.ObjectMapper
 import kotlinx.coroutines.reactor.awaitSingle
 import kotlinx.coroutines.reactor.awaitSingleOrNull
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.data.redis.core.ReactiveStringRedisTemplate
@@ -24,6 +31,10 @@ class RedisMemoryService(
     @Value("\${interview.transcript-max-turns:6}") private val maxTranscriptTurns: Int,
 ) {
     private val log = LoggerFactory.getLogger(RedisMemoryService::class.java)
+
+    /** Per-session mutex to serialize concurrent read-modify-write cycles. */
+    private val sessionMutexes = java.util.concurrent.ConcurrentHashMap<UUID, Mutex>()
+    private fun getMutex(sessionId: UUID): Mutex = sessionMutexes.getOrPut(sessionId) { Mutex() }
 
     companion object {
         fun memoryKey(sessionId: UUID) = "interview:session:$sessionId:memory"
@@ -80,11 +91,11 @@ class RedisMemoryService(
     suspend fun updateMemory(
         sessionId: UUID,
         updater: (InterviewMemory) -> InterviewMemory,
-    ): InterviewMemory {
+    ): InterviewMemory = getMutex(sessionId).withLock {
         val current = getMemory(sessionId)
         val updated = updater(current)
         saveMemory(sessionId, updated)
-        return updated
+        updated
     }
 
     /**
@@ -98,7 +109,7 @@ class RedisMemoryService(
         sessionId: UUID,
         role: String,
         content: String,
-    ): InterviewMemory {
+    ): InterviewMemory = getMutex(sessionId).withLock {
         val memory  = getMemory(sessionId)
         val newTurn = TranscriptTurn(role = role, content = content)
         val updated = memory.rollingTranscript + newTurn
@@ -120,7 +131,7 @@ class RedisMemoryService(
             lastActivityAt    = Instant.now(),
         )
         saveMemory(sessionId, newMemory)
-        return newMemory
+        newMemory
     }
 
     /**
@@ -135,6 +146,7 @@ class RedisMemoryService(
     /** Deletes the session memory key. Call this on session end. */
     suspend fun deleteMemory(sessionId: UUID) {
         redisTemplate.delete(memoryKey(sessionId)).awaitSingleOrNull()
+        sessionMutexes.remove(sessionId)
         log.debug("Deleted memory for session {}", sessionId)
     }
 
@@ -142,9 +154,76 @@ class RedisMemoryService(
     suspend fun memoryExists(sessionId: UUID): Boolean =
         redisTemplate.hasKey(memoryKey(sessionId)).awaitSingle()
 
+    /**
+     * Tries Redis first; on miss, reconstructs a minimal InterviewMemory from DB.
+     * Returns null only if the session doesn't exist or isn't ACTIVE.
+     */
+    suspend fun getMemoryWithFallback(
+        sessionId: UUID,
+        sessionRepository: InterviewSessionRepository,
+        sessionQuestionRepository: SessionQuestionRepository,
+        conversationMessageRepository: ConversationMessageRepository,
+        questionRepository: QuestionRepository,
+    ): InterviewMemory? {
+        val fromRedis = runCatching { getMemory(sessionId) }.getOrNull()
+        if (fromRedis != null) return fromRedis
+
+        // Redis miss — reconstruct from DB
+        val session = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            sessionRepository.findById(sessionId).awaitSingleOrNull()
+        } ?: return null
+
+        if (session.status != "ACTIVE") return null
+
+        val config = runCatching {
+            objectMapper.readValue(session.config, InterviewConfig::class.java)
+        }.getOrNull() ?: return null
+
+        val sessionQuestions = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            sessionQuestionRepository.findBySessionIdOrderByOrderIndex(sessionId)
+                .collectList().awaitSingle()
+        }
+
+        val firstSq = sessionQuestions.firstOrNull() ?: return null
+        val firstQuestion = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            questionRepository.findById(firstSq.questionId).awaitSingleOrNull()
+        }?.toInternalDto(objectMapper) ?: return null
+
+        val recentMessages = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            conversationMessageRepository.findRecentBySessionId(sessionId, 10)
+                .collectList().awaitSingle()
+        }.reversed().map { TranscriptTurn(role = it.role, content = it.content) }
+
+        val reconstructed = InterviewMemory(
+            sessionId = sessionId,
+            userId = session.userId,
+            state = "QUESTION_PRESENTED",
+            category = config.category.name,
+            personality = config.personality,
+            currentQuestion = firstQuestion,
+            candidateAnalysis = null,
+            programmingLanguage = config.programmingLanguage,
+            rollingTranscript = recentMessages,
+            earlierContext = "[Session recovered after restart. Some context may be missing.]",
+            interviewStage = session.currentStage ?: "SMALL_TALK",
+            currentQuestionIndex = 0,
+            totalQuestions = sessionQuestions.size.coerceAtLeast(1),
+            targetCompany = config.targetCompany,
+            targetRole = config.targetRole,
+            experienceLevel = config.experienceLevel,
+            background = config.background,
+            createdAt = session.startedAt?.toInstant() ?: java.time.Instant.now(),
+            lastActivityAt = java.time.Instant.now(),
+        )
+
+        saveMemory(sessionId, reconstructed)
+        log.info("Reconstructed memory from DB for session {}", sessionId)
+        return reconstructed
+    }
+
     // ── Smart orchestrator helpers ──────────────────────────────────────────
 
-    suspend fun appendAgentNote(sessionId: UUID, note: String) {
+    suspend fun appendAgentNote(sessionId: UUID, note: String) = getMutex(sessionId).withLock {
         val memory = getMemory(sessionId)
         val existing = memory.agentNotes
         val updated = if (existing.isBlank()) note else "$existing\n• $note"

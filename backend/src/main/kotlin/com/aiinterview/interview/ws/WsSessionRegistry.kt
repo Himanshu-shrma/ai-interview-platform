@@ -17,6 +17,7 @@ import reactor.core.publisher.Flux
 import reactor.core.publisher.Sinks
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicInteger
 
 private const val HEARTBEAT_INTERVAL_MS = 30_000L
 
@@ -30,6 +31,9 @@ class WsSessionRegistry(private val objectMapper: ObjectMapper) {
 
     /** sessionId → outbound message sink (pushes JSON strings to the WS send stream) */
     private val sinks = ConcurrentHashMap<UUID, Sinks.Many<String>>()
+
+    /** Tracks in-flight sends per session to prevent race with pruning */
+    private val inFlightSends = ConcurrentHashMap<UUID, AtomicInteger>()
 
     private val scope = CoroutineScope(Dispatchers.IO)
     private lateinit var heartbeatJob: Job
@@ -63,8 +67,17 @@ class WsSessionRegistry(private val objectMapper: ObjectMapper) {
     }
 
     fun deregister(sessionId: UUID) {
+        // Wait briefly for in-flight sends to drain
+        val counter = inFlightSends[sessionId]
+        if (counter != null && counter.get() > 0) {
+            val deadline = System.currentTimeMillis() + 2000
+            while (counter.get() > 0 && System.currentTimeMillis() < deadline) {
+                Thread.sleep(50)
+            }
+        }
         sessions.remove(sessionId)
         sinks.remove(sessionId)?.tryEmitComplete()
+        inFlightSends.remove(sessionId)
         log.debug("WS deregistered: sessionId={}", sessionId)
     }
 
@@ -80,6 +93,8 @@ class WsSessionRegistry(private val objectMapper: ObjectMapper) {
      */
     suspend fun sendMessage(sessionId: UUID, message: OutboundMessage): Boolean {
         val sink = sinks[sessionId] ?: return false
+        val counter = inFlightSends.getOrPut(sessionId) { AtomicInteger(0) }
+        counter.incrementAndGet()
         return try {
             val json = objectMapper.writeValueAsString(message)
             val result = sink.tryEmitNext(json)
@@ -92,6 +107,8 @@ class WsSessionRegistry(private val objectMapper: ObjectMapper) {
         } catch (e: Exception) {
             log.warn("Failed to send message to sessionId={}: {}", sessionId, e.message)
             false
+        } finally {
+            counter.decrementAndGet()
         }
     }
 

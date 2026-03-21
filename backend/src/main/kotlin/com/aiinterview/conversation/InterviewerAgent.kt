@@ -73,9 +73,12 @@ class InterviewerAgent(
         }
 
         // ── CODING GATE — skip LLM when stage=CODING and no real code ──
+        // ONLY for coding-type interviews. BEHAVIORAL and SYSTEM_DESIGN never gate.
         val codingStage = stateCtx?.stage ?: memory.interviewStage
         val hasCode = stateCtx?.hasMeaningfulCode ?: hasMeaningfulCode(memory)
-        if (codingStage == "CODING" && !hasCode) {
+        val isCodingInterview = (stateCtx?.category ?: memory.category).uppercase()
+            .let { it in setOf("CODING", "DSA") }
+        if (isCodingInterview && codingStage == "CODING" && !hasCode) {
             val msgLower = userMessage.lowercase()
             val cannedResponse = when {
                 userMessage.length > 150 ->
