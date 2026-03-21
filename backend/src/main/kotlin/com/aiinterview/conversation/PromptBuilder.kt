@@ -1,6 +1,8 @@
 package com.aiinterview.conversation
 
+import com.aiinterview.interview.service.CandidateModel
 import com.aiinterview.interview.service.InterviewMemory
+import com.aiinterview.conversation.objectives.ObjectiveState
 import org.springframework.stereotype.Component
 
 private const val MAX_PROMPT_CHARS = 16_000  // ≈ 4000 tokens at ~4 chars/token
@@ -79,6 +81,7 @@ class PromptBuilder {
         stateCtx: StateContext? = null,
         codeDetails: String? = null,
         testResultSummary: String? = null,
+        objectiveState: ObjectiveState? = null,
     ): String = buildString {
         // Part 0 — base persona
         appendLine(BASE_PERSONA)
@@ -88,9 +91,30 @@ class PromptBuilder {
         appendLine(personalityRules(memory.personality))
         appendLine()
 
-        // Part 1 — STAGE-SPECIFIC behavior rules (most important part)
-        appendLine(stageRules(memory))
-        appendLine()
+        // Part 0.6 — objectives block (what must be covered)
+        objectiveState?.let { os ->
+            appendLine(buildObjectivesBlock(os))
+            appendLine()
+        }
+
+        // Part 0.7 — situation-based context (replaces rigid stage rules when objectives available)
+        if (objectiveState != null) {
+            appendLine(buildSituationContext(objectiveState, stateCtx, memory))
+            appendLine()
+        }
+
+        // Part 1 — STAGE-SPECIFIC behavior rules (legacy — still used as fallback)
+        if (objectiveState == null) {
+            appendLine(stageRules(memory))
+            appendLine()
+        }
+
+        // Part 1.5 — candidate mental model
+        val modelBlock = buildCandidateModelBlock(memory)
+        if (modelBlock.isNotBlank()) {
+            appendLine(modelBlock)
+            appendLine()
+        }
 
         // Part 2 — category framework
         appendLine(categoryFramework(memory.category))
@@ -580,6 +604,140 @@ Value simplicity and elegance in design."""
         }
 
         appendLine("=============================")
+    }
+
+    // ── Objectives block ──────────────────────────────────────────────────
+
+    private fun buildObjectivesBlock(state: ObjectiveState): String = buildString {
+        appendLine("=== INTERVIEW OBJECTIVES ===")
+        if (state.completedObjectives.isNotEmpty()) {
+            appendLine("COMPLETED: ${state.completedObjectives.joinToString(", ")}")
+        }
+        if (state.remainingRequired.isNotEmpty()) {
+            appendLine("\nSTILL NEEDED:")
+            state.remainingRequired.take(3).forEach { obj ->
+                val unlocked = obj.dependsOn.all { it in state.completedObjectives }
+                val prefix = if (unlocked) "-> NEXT:" else "   (after above):"
+                appendLine("$prefix ${obj.description}")
+            }
+        }
+        state.nextObjective?.let { next ->
+            appendLine("\nMOST IMPORTANT THIS TURN:")
+            appendLine(next.description)
+            appendLine("Done when: ${next.completionSignal}")
+        } ?: appendLine("\nAll required objectives complete. Wrap up.")
+        appendLine("\nTIME: ${state.remainingMinutes} min remaining")
+        if (state.isBehindSchedule) appendLine("BEHIND SCHEDULE — be direct, move faster")
+        appendLine("PHASE: ${state.currentPhaseLabel} (informational — do not let this restrict you)")
+        appendLine("===========================")
+    }
+
+    // ── Situation-based context (replaces rigid stage rules) ────────────
+
+    private fun buildSituationContext(
+        state: ObjectiveState,
+        stateCtx: StateContext?,
+        memory: InterviewMemory,
+    ): String {
+        val isCodingType = memory.category.uppercase() in setOf("CODING", "DSA")
+        val completed = state.completedObjectives
+
+        return buildString {
+            appendLine("=== CURRENT SITUATION ===")
+            when {
+                "problem_presented" !in completed -> appendLine(
+                    "Interview just started. Warm up briefly, then present the problem. Don't over-explain."
+                )
+                isCodingType && "approach_discussed" !in completed -> {
+                    appendLine("Problem presented. Candidate is forming their approach.")
+                    appendLine("Listen to HOW they think. React to their specific idea.")
+                    appendLine("When approach is solid: 'Sounds good, go ahead and code it.'")
+                    if (stateCtx?.hasMeaningfulCode == false) {
+                        appendLine("Code editor is EMPTY — they haven't started coding.")
+                    }
+                }
+                isCodingType && "code_written" !in completed -> {
+                    appendLine("Candidate is coding.")
+                    if (stateCtx?.hasMeaningfulCode == false) {
+                        appendLine("No real code yet. If talking: redirect to coding. If silent: let them work.")
+                    } else {
+                        appendLine("They have ${stateCtx?.codeLineCount ?: 0} lines. Watch what they're building.")
+                        appendLine("If correct: stay silent. If stuck 2+ min: 'Where are you at?'")
+                    }
+                }
+                isCodingType && "complexity_covered" !in completed -> {
+                    appendLine("Code written. Time to review together.")
+                    stateCtx?.testsPassed?.let { passed ->
+                        val total = stateCtx.testsTotal ?: 0
+                        if (passed == total) {
+                            appendLine("Tests PASSING. Ask complexity, edge cases, trace through specific input.")
+                        } else {
+                            appendLine("${total - passed} test(s) FAILING. Don't reveal which. Ask them to trace a failing input.")
+                        }
+                    } ?: appendLine("Review their solution. Ask complexity, edge cases, specific lines.")
+                }
+                memory.category.uppercase() == "BEHAVIORAL" -> {
+                    val starsDone = completed.count { it.startsWith("star_q") }
+                    appendLine("Behavioral interview. STAR stories collected: $starsDone")
+                    appendLine("If vague: 'What specifically did YOU do?'")
+                    appendLine("If no result: 'What was the actual outcome?'")
+                    appendLine("Story complete when situation+task+action+result all present.")
+                }
+                memory.category.uppercase() == "SYSTEM_DESIGN" -> {
+                    appendLine("System design discussion.")
+                    state.nextObjective?.let { appendLine("Focus: ${it.description}") }
+                    appendLine("Drill as they talk. Probe trade-offs and scale.")
+                }
+                "wrap_up" !in completed -> {
+                    appendLine("Core objectives done. Probe the weakest area.")
+                    if (state.remainingMinutes <= 5) appendLine("Time short. One final question then wrap up.")
+                }
+                else -> appendLine("Interview complete. Wrap up professionally. Ask if they have questions.")
+            }
+
+            memory.pendingProbe?.takeIf { it.isNotBlank() }?.let { probe ->
+                appendLine("\nPROBE THIS TURN: $probe")
+                appendLine("Embed this naturally in your response.")
+            }
+            appendLine("===========================")
+        }
+    }
+
+    // ── Candidate mental model block ────────────────────────────────────
+
+    private fun buildCandidateModelBlock(memory: InterviewMemory): String {
+        val model = memory.candidateModel
+        if (memory.turnCount < 2 || model.overallSignal == "unknown") return ""
+
+        return buildString {
+            appendLine("=== CANDIDATE MODEL ===")
+            when (model.overallSignal) {
+                "strong" -> appendLine("SIGNAL: Strong candidate. Raise the bar. Push harder.")
+                "solid" -> appendLine("SIGNAL: Solid but not exceptional. Push on weaker areas.")
+                "average" -> appendLine("SIGNAL: Average. Be patient but keep probing.")
+                "struggling" -> appendLine("SIGNAL: Struggling. Be patient. ONE question at a time. Find what they DO know.")
+            }
+            if (model.thinkingStyle != "unknown") {
+                appendLine("THINKING: ${model.thinkingStyle}")
+            }
+            if (model.stateSignal != "neutral") {
+                appendLine("STATE: ${model.stateSignal.uppercase()}")
+                when (model.stateSignal) {
+                    "nervous" -> appendLine("-> Slow down. Be warmer.")
+                    "stuck" -> appendLine("-> Ask: 'What have you tried so far?'")
+                    "confident" -> appendLine("-> Challenge them. Don't let them cruise.")
+                    "flowing" -> appendLine("-> Keep the pace.")
+                }
+            }
+            if (model.activeHypotheses.isNotEmpty()) {
+                appendLine("HYPOTHESES TO VERIFY:")
+                model.activeHypotheses.take(2).forEach { appendLine("? $it") }
+            }
+            if (model.interviewNarrative.isNotBlank()) {
+                appendLine("YOUR THEORY: ${model.interviewNarrative.take(250)}")
+            }
+            appendLine("=======================")
+        }
     }
 
     /**

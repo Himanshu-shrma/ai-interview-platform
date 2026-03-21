@@ -247,6 +247,20 @@ class RedisMemoryService(
         updateMemory(sessionId) { it.copy(currentQuestionIndex = it.currentQuestionIndex + 1) }
     }
 
+    // ── Objectives + candidate model helpers ────────────────────────────────
+
+    suspend fun markObjectivesComplete(sessionId: UUID, objectiveIds: List<String>) {
+        updateMemory(sessionId) { memory ->
+            memory.copy(completedObjectives = (memory.completedObjectives + objectiveIds).distinct())
+        }
+    }
+
+    suspend fun incrementTurnCount(sessionId: UUID) {
+        updateMemory(sessionId) { memory ->
+            memory.copy(turnCount = memory.turnCount + 1)
+        }
+    }
+
     // ── Private helpers ───────────────────────────────────────────────────────
 
     private suspend fun saveMemory(sessionId: UUID, memory: InterviewMemory) {

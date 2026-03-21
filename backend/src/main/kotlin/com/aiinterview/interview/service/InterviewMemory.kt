@@ -33,8 +33,30 @@ data class InterviewMemory(
     val edgeCasesCovered: Int = 0,
     val agentNotes: String = "",
     val lastTestResult: TestResultCache? = null,
+    // Objectives tracking
+    val completedObjectives: List<String> = emptyList(),
+    val stalledObjectiveId: String? = null,
+    val stalledTurnCount: Int = 0,
+    val turnCount: Int = 0,
+    val pendingProbe: String? = null,
+    // Candidate mental model
+    val candidateModel: CandidateModel = CandidateModel(),
     val createdAt: Instant = Instant.now(),
     val lastActivityAt: Instant = Instant.now(),
+)
+
+@JsonIgnoreProperties(ignoreUnknown = true)
+data class CandidateModel(
+    val thinkingStyle: String = "unknown",
+    val knowledgeSignals: Map<String, Float> = emptyMap(),
+    val behaviorPatterns: List<String> = emptyList(),
+    val activeHypotheses: List<String> = emptyList(),
+    val interviewNarrative: String = "",
+    val stateSignal: String = "neutral",
+    val nextProbeTheory: String = "",
+    val probedTopics: List<String> = emptyList(),
+    val overallSignal: String = "unknown",
+    val lastUpdatedTurn: Int = 0,
 )
 
 @JsonIgnoreProperties(ignoreUnknown = true)

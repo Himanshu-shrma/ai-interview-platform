@@ -1,5 +1,6 @@
 package com.aiinterview.conversation
 
+import com.aiinterview.conversation.objectives.ObjectiveState
 import com.aiinterview.interview.model.ConversationMessage
 import com.aiinterview.interview.repository.ConversationMessageRepository
 import com.aiinterview.interview.service.InterviewMemory
@@ -63,6 +64,7 @@ class InterviewerAgent(
         sessionId: UUID,
         memory: InterviewMemory,
         userMessage: String,
+        objectiveState: ObjectiveState? = null,
     ): String {
         // ── Phase 1: Fetch FRESH state from Redis+DB ──
         val stateCtx = try {
@@ -112,8 +114,18 @@ class InterviewerAgent(
             stateCtx = effectiveStateCtx,
             codeDetails = toolCtx?.codeDetails,
             testResultSummary = toolCtx?.testResultSummary,
+            objectiveState = objectiveState,
         )
         val fullResponse = StringBuilder()
+
+        // Clear pendingProbe after it's been consumed into the prompt
+        if (!memory.pendingProbe.isNullOrBlank()) {
+            try {
+                redisMemoryService.updateMemory(sessionId) { it.copy(pendingProbe = null) }
+            } catch (e: Exception) {
+                log.debug("Failed to clear pendingProbe for {}: {}", sessionId, e.message)
+            }
+        }
 
         val effectiveStage = effectiveStateCtx?.stage ?: memory.interviewStage
         val maxTokens = maxTokensFor(effectiveStage, messageType)

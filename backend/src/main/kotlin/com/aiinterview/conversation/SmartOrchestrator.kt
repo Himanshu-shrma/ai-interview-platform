@@ -133,11 +133,18 @@ RULES:
             }
         }
 
-        // Persist agent note
+        // Persist agent note and queue probe if gap detected
         decision.noteToSave
             ?.takeIf { it.length > 10 }
             ?.let { note ->
                 redisMemoryService.appendAgentNote(sessionId, note)
+                // If gap detected and no pending probe: queue one
+                val memory = try { redisMemoryService.getMemory(sessionId) } catch (_: Exception) { null }
+                if (memory?.pendingProbe.isNullOrBlank()) {
+                    mapGapToProbe(note)?.let { probe ->
+                        redisMemoryService.updateMemory(sessionId) { it.copy(pendingProbe = probe) }
+                    }
+                }
             }
 
         // Stage transition — validated by rules, never arbitrary
@@ -187,6 +194,25 @@ RULES:
             "WRAP_UP" to emptySet<String>(),
         )
         return target in (valid[current] ?: emptySet())
+    }
+
+    private fun mapGapToProbe(note: String): String? {
+        val lower = note.lowercase()
+        return when {
+            lower.contains("complex") || lower.contains("o(n") || lower.contains("big-o") ->
+                "Ask about time/space complexity of their current approach."
+            lower.contains("edge") || lower.contains("null") || lower.contains("empty") ->
+                "Ask about edge cases: empty input, null, single element."
+            lower.contains("scale") || lower.contains("10^") || lower.contains("billion") ->
+                "Ask how their solution handles 10x the input size."
+            lower.contains("tradeoff") || lower.contains("trade-off") || lower.contains("alternative") ->
+                "Ask: 'What are the trade-offs? What would you change?'"
+            lower.contains("why") || lower.contains("reason") || lower.contains("chose") ->
+                "Ask them to justify their key design/algorithm choice."
+            lower.contains("vague") || lower.contains("unclear") || lower.contains("generic") ->
+                "Their answer was vague. Ask: 'Can you give me a specific example?'"
+            else -> null
+        }
     }
 
     private fun parseDecision(raw: String): OrchestratorDecision {

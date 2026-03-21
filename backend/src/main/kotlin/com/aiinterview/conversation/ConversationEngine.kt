@@ -1,5 +1,9 @@
 package com.aiinterview.conversation
 
+import com.aiinterview.conversation.objectives.FlowGuard
+import com.aiinterview.conversation.objectives.ObjectiveTracker
+import com.aiinterview.conversation.objectives.ObjectivesRegistry
+import com.aiinterview.conversation.objectives.computeObjectiveState
 import com.aiinterview.interview.dto.toInternalDto
 import com.aiinterview.interview.model.ConversationMessage
 import com.aiinterview.interview.repository.ConversationMessageRepository
@@ -53,6 +57,9 @@ class ConversationEngine(
     @Lazy private val reportService: ReportService,
     private val smartOrchestrator: SmartOrchestrator,
     private val stateContextBuilder: StateContextBuilder,
+    private val objectiveTracker: ObjectiveTracker,
+    private val flowGuard: FlowGuard,
+    private val candidateModelUpdater: CandidateModelUpdater,
 ) {
     private val log = LoggerFactory.getLogger(ConversationEngine::class.java)
 
@@ -100,37 +107,65 @@ class ConversationEngine(
         // State: CANDIDATE_RESPONDING
         transition(sessionId, InterviewState.CandidateResponding)
 
+        // Compute objective state for this turn
+        val objectives = ObjectivesRegistry.forCategory(memory.category)
+        val stateCtx = try { stateContextBuilder.build(sessionId) } catch (_: Exception) { null }
+        val objState = computeObjectiveState(memory, objectives, stateCtx?.remainingMinutes ?: 45)
+
         // Stream AI response (returns the completed response text)
-        val aiResponse = interviewerAgent.streamResponse(sessionId, memory, content)
+        val aiResponse = interviewerAgent.streamResponse(sessionId, memory, content, objState)
 
         // State: AI_ANALYZING
         transition(sessionId, InterviewState.AiAnalyzing)
 
-        // ── Phase 2: SmartOrchestrator + legacy AgentOrchestrator (fire-and-forget) ──
-        val stateCtx = try {
-            stateContextBuilder.build(sessionId)
-        } catch (e: Exception) {
-            log.warn("StateContextBuilder failed for background orchestration {}: {}", sessionId, e.message)
-            null
-        }
-        getSessionScope(sessionId).launch {
+        // ── Background tasks (fire-and-forget on per-session scope) ──
+        val scope = getSessionScope(sessionId)
+
+        // SmartOrchestrator + legacy orchestrator
+        scope.launch {
             try {
-                // SmartOrchestrator: LLM-driven analysis (Phase 2)
                 if (stateCtx != null) {
-                    smartOrchestrator.orchestrate(
-                        sessionId = sessionId,
-                        candidateMessage = content,
-                        aiResponse = aiResponse,
-                        ctx = stateCtx,
-                    )
+                    smartOrchestrator.orchestrate(sessionId, content, aiResponse, stateCtx)
                 }
-                // Legacy orchestrator: handles CodingChallenge/Evaluating transitions
                 agentOrchestrator.analyzeAndTransition(sessionId, content)
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                log.error("Background orchestration failed for session {}: {}", sessionId, e.message)
-            }
+            } catch (e: CancellationException) { throw e }
+            catch (e: Exception) { log.error("Background orchestration failed for {}: {}", sessionId, e.message) }
+        }
+
+        // ObjectiveTracker — marks objectives complete
+        scope.launch {
+            try { objectiveTracker.update(sessionId, content, aiResponse, memory) }
+            catch (e: CancellationException) { throw e }
+            catch (e: Exception) { log.warn("ObjectiveTracker failed for {}: {}", sessionId, e.message) }
+        }
+
+        // FlowGuard — sets pendingProbe if needed
+        scope.launch {
+            try {
+                val freshMemory = redisMemoryService.getMemory(sessionId)
+                val freshObjState = computeObjectiveState(freshMemory, objectives, stateCtx?.remainingMinutes ?: 45)
+                val probe = flowGuard.check(sessionId, freshMemory, freshObjState)
+                if (probe != null) {
+                    redisMemoryService.updateMemory(sessionId) { it.copy(pendingProbe = probe) }
+                }
+            } catch (e: CancellationException) { throw e }
+            catch (e: Exception) { log.warn("FlowGuard failed for {}: {}", sessionId, e.message) }
+        }
+
+        // CandidateModelUpdater — evolves mental model every 2 turns
+        scope.launch {
+            try {
+                val freshMemory = redisMemoryService.getMemory(sessionId)
+                candidateModelUpdater.update(sessionId, freshMemory)
+            } catch (e: CancellationException) { throw e }
+            catch (e: Exception) { log.warn("CandidateModelUpdater failed for {}: {}", sessionId, e.message) }
+        }
+
+        // Increment turn count
+        scope.launch {
+            try { redisMemoryService.incrementTurnCount(sessionId) }
+            catch (e: CancellationException) { throw e }
+            catch (e: Exception) { log.warn("Turn count increment failed for {}: {}", sessionId, e.message) }
         }
     }
 
