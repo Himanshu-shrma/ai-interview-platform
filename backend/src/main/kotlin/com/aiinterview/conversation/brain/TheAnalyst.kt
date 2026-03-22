@@ -268,7 +268,12 @@ QUESTION TYPE CLASSIFICATION:
         }
 
         // 6. Goals completed
-        if (decision.goalsCompleted.isNotEmpty()) brainService.markGoalsComplete(sessionId, decision.goalsCompleted)
+        if (decision.goalsCompleted.isNotEmpty()) {
+            brainService.markGoalsComplete(sessionId, decision.goalsCompleted)
+            log.info("TheAnalyst marked goals complete: {} for session={}", decision.goalsCompleted, sessionId)
+        } else {
+            log.debug("TheAnalyst: no goals completed this turn for session={}", sessionId)
+        }
 
         // 7. Thought thread
         if (decision.thoughtThreadAppend.isNotBlank()) brainService.appendThought(sessionId, decision.thoughtThreadAppend)
@@ -281,6 +286,7 @@ QUESTION TYPE CLASSIFICATION:
                 priority = a.priority, expiresAfterTurn = brain.turnCount + a.expiresInTurns,
                 source = ActionSource.ANALYST, bloomsLevel = a.bloomsLevel,
             ))
+            log.info("TheAnalyst: action queued type={} priority={} for session={}", a.type, a.priority, sessionId)
         }
 
         // 9. Exchange score

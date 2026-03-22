@@ -168,17 +168,33 @@ class ConversationEngine(
 
         transition(sessionId, InterviewState.QuestionPresented)
 
-        // Send personality-based opening message
-        val openingMessage = when (memory.personality.uppercase()) {
-            "FAANG_SENIOR" -> "Hey. Ready to get started? I'll share the problem."
-            "FRIENDLY_MENTOR", "FRIENDLY" -> "Hey! How's it going? Excited to work through this with you today."
-            "STARTUP_ENGINEER", "STARTUP" -> "Hey, welcome. Let's jump right in \u2014 I'll share a problem and we'll work through it together."
-            "ADAPTIVE" -> "Hi! How are you doing today? Ready to get started?"
-            else -> "Hey! How's it going? I'll be your interviewer today. Whenever you're ready, we can jump in."
+        // Build opening message with ACTUAL question (no hallucination risk)
+        val q = memory.currentQuestion
+        val questionTitle = q?.title ?: "Interview Question"
+        val questionDesc = q?.description ?: ""
+
+        val greeting = when (memory.personality.uppercase()) {
+            "FAANG_SENIOR" -> "Hey. Let's get right to it."
+            "FRIENDLY_MENTOR", "FRIENDLY" -> "Hey! Great to meet you. Let's dive in."
+            "STARTUP_ENGINEER", "STARTUP" -> "Hey, welcome. Let's jump right in."
+            "ADAPTIVE" -> "Hi! Ready to get started? Here's your problem."
+            else -> "Hey! I'll be your interviewer today. Here's what we'll work on."
+        }
+
+        val openingMessage = if (questionDesc.isNotBlank()) {
+            "$greeting\n\n**$questionTitle**\n\n$questionDesc\n\nTake a moment to read through it. When you're ready, walk me through your initial thoughts."
+        } else {
+            "$greeting Whenever you're ready, we can begin."
         }
 
         registry.sendMessage(sessionId, OutboundMessage.AiChunk(delta = openingMessage, done = false))
         registry.sendMessage(sessionId, OutboundMessage.AiChunk(delta = "", done = true))
+
+        // Show code editor for CODING/DSA types
+        val isCodingType = memory.category.uppercase() in setOf("CODING", "DSA")
+        if (isCodingType) {
+            registry.sendMessage(sessionId, OutboundMessage.StateChange(state = "CODING_CHALLENGE"))
+        }
 
         // Initialize brain
         try {
@@ -196,7 +212,15 @@ class ConversationEngine(
                 personality = memory.personality, targetCompany = memory.targetCompany,
                 experienceLevel = memory.experienceLevel, programmingLanguage = memory.programmingLanguage,
             )
-            log.info("Brain initialized for session {}", sessionId)
+            log.info("Brain initialized for session {} — question='{}' type={}", sessionId, question.title, memory.category)
+            if (question.title.isBlank()) log.error("CRITICAL: Question title is blank for session {}", sessionId)
+            if (question.description.isBlank()) log.error("CRITICAL: Question description is blank for session {}", sessionId)
+
+            // Mark problem_shared complete since we presented it in the opening
+            if (questionDesc.isNotBlank()) {
+                brainService.markGoalComplete(sessionId, "problem_shared")
+                log.info("problem_shared marked complete for session {}", sessionId)
+            }
         } catch (e: Exception) {
             log.error("Brain init failed for {}: {}", sessionId, e.message)
         }
