@@ -11,6 +11,21 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 
+function renderMarkdown(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/```([\s\S]*?)```/g, '<pre><code>$1</code></pre>')
+    .replace(/`([^`]+)`/g, '<code class="bg-muted-foreground/10 px-1 py-0.5 rounded text-xs">$1</code>')
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    .replace(/\*(.+?)\*/g, '<em>$1</em>')
+    .replace(/\n\n/g, '</p><p>')
+    .replace(/\n/g, '<br/>')
+    .replace(/^/, '<p>')
+    .replace(/$/, '</p>')
+}
+
 interface ConversationPanelProps {
   messages: ConversationMessage[]
   isAiThinking: boolean
@@ -76,13 +91,22 @@ export function ConversationPanel({
           <div
             key={msg.id}
             className={cn(
-              'max-w-[85%] rounded-lg px-4 py-2.5 text-sm whitespace-pre-wrap',
+              'max-w-[85%] rounded-lg px-4 py-2.5 text-sm',
               msg.role === 'AI'
                 ? 'self-start bg-muted text-foreground'
-                : 'self-end ml-auto bg-primary text-primary-foreground'
+                : 'self-end ml-auto bg-primary text-primary-foreground whitespace-pre-wrap'
             )}
           >
-            {msg.content}
+            {msg.role === 'AI' ? (
+              <div
+                className="prose prose-sm dark:prose-invert max-w-none [&>p]:my-1 [&>ul]:my-1 [&>ol]:my-1"
+                dangerouslySetInnerHTML={{
+                  __html: renderMarkdown(msg.content)
+                }}
+              />
+            ) : (
+              msg.content
+            )}
             {msg.isStreaming && (
               <span className="inline-block w-1.5 h-4 ml-0.5 bg-foreground/70 animate-pulse" />
             )}

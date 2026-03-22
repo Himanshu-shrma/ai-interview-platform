@@ -7,6 +7,10 @@ import com.aiinterview.code.model.CodeSubmission
 import com.aiinterview.code.repository.CodeSubmissionRepository
 import com.aiinterview.conversation.ConversationEngine
 import com.aiinterview.conversation.InterviewState
+import com.aiinterview.conversation.brain.ActionSource
+import com.aiinterview.conversation.brain.ActionType
+import com.aiinterview.conversation.brain.BrainService
+import com.aiinterview.conversation.brain.IntendedAction
 import com.aiinterview.interview.repository.QuestionRepository
 import com.aiinterview.interview.repository.SessionQuestionRepository
 import com.aiinterview.interview.service.RedisMemoryService
@@ -35,6 +39,7 @@ class CodeExecutionService(
     private val questionRepository: QuestionRepository,
     private val codeSubmissionRepository: CodeSubmissionRepository,
     private val conversationEngine: ConversationEngine,
+    private val brainService: BrainService,
     private val objectMapper: ObjectMapper,
 ) {
     private val log = LoggerFactory.getLogger(CodeExecutionService::class.java)
@@ -173,6 +178,36 @@ class CodeExecutionService(
         )
 
         log.info("Code submit session={} status={} passed={}/{}", sessionId, status, testResults.count { it.passed }, testResults.size)
+
+        // Queue brain action based on test results
+        val brain = try { brainService.getBrainOrNull(sessionId) } catch (_: Exception) { null }
+        if (brain != null) {
+            val passed = testResults.count { it.passed }
+            val total = testResults.size
+            if (!allPassed && total > 0) {
+                brainService.addAction(sessionId, IntendedAction(
+                    id = "test_fail_${brain.turnCount}",
+                    type = ActionType.PROBE_DEPTH,
+                    description = "Tests FAILING: $passed/$total passed. " +
+                        "Do NOT reveal which tests or the issue. " +
+                        "Ask: 'I see some tests aren't passing — what do you think might be causing that?' " +
+                        "Let them debug. This is highly diagnostic.",
+                    priority = 1,
+                    expiresAfterTurn = brain.turnCount + 3,
+                    source = ActionSource.ANALYST,
+                ))
+            } else if (allPassed && total > 0) {
+                brainService.addAction(sessionId, IntendedAction(
+                    id = "tests_pass_${brain.turnCount}",
+                    type = ActionType.ADVANCE_GOAL,
+                    description = "All $total tests passing. " +
+                        "Ask: 'All tests pass. What's the time and space complexity of your solution?'",
+                    priority = 2,
+                    expiresAfterTurn = brain.turnCount + 3,
+                    source = ActionSource.ANALYST,
+                ))
+            }
+        }
 
         // Transition on full pass
         if (allPassed) {

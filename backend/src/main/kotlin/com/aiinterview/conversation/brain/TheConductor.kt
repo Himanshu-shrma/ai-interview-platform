@@ -123,8 +123,8 @@ class TheConductor(
             return canned
         }
 
-        // Build prompt from brain state
-        val codeContent = if (isCodingInterview && state.currentPhaseLabel in setOf("REVIEW", "FOLLOWUP", "WRAP_UP")) brain.currentCode?.take(2000) else null
+        // Build prompt from brain state — include code whenever it exists so AI can reference it
+        val codeContent = if (isCodingInterview && hasMeaningfulCode) brain.currentCode?.take(2000) else null
         val systemPrompt = promptBuilder.build(brain, state, codeContent)
         val fullResponse = StringBuilder()
 

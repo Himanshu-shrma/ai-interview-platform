@@ -351,6 +351,7 @@ export default function InterviewPage() {
 
   const isEnded = currentState === 'EVALUATING' || currentState === 'INTERVIEW_END' || !!reportId
   const isEvaluating = currentState === 'EVALUATING' && !reportId
+  const isBehavioral = session?.category === 'BEHAVIORAL'
   const headerTitle = session?.category
     ? `${session.category.charAt(0) + session.category.slice(1).toLowerCase().replace('_', ' ')} Interview`
     : 'Interview Session'
@@ -452,8 +453,8 @@ export default function InterviewPage() {
           />
         </div>
 
-        {/* Code panel — with visual highlight on CODING stage entry */}
-        {showCodeEditor && (
+        {/* Code panel — hidden for BEHAVIORAL, visual highlight on CODING stage entry */}
+        {showCodeEditor && !isBehavioral && (
           <div className={`flex flex-1 flex-col min-w-0 transition-all duration-500 ${editorHighlighted ? 'ring-2 ring-blue-400 ring-opacity-75' : ''}`}>
             <div className="flex-1 min-h-0">
               <Suspense fallback={<div className="flex items-center justify-center h-full text-muted-foreground">Loading editor...</div>}>
