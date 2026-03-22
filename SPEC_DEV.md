@@ -22,6 +22,12 @@
 18. [Known Limitations and Technical Debt](#18-known-limitations-and-technical-debt)
 19. [Glossary](#19-glossary)
 20. [Production Reliability Fixes](#20-production-reliability-fixes)
+21. [Natural Interviewer — Brain Architecture](#21-natural-interviewer--brain-architecture)
+22. [Interview Objectives System](#22-interview-objectives-system)
+23. [Knowledge Adjacency Map](#23-knowledge-adjacency-map)
+24. [Evaluation System (8 Dimensions)](#24-evaluation-system-8-dimensions)
+25. [Scientific Research Basis](#25-scientific-research-basis)
+26. [Feature Flag — Natural Interviewer](#26-feature-flag--natural-interviewer)
 
 ---
 
@@ -1536,3 +1542,124 @@ When `InterviewWebSocketHandler.onConnect()` finds Redis memory expired but `int
 | No circuit breakers on OpenAI | One slow LLM call blocks the coroutine; no fast-fail on provider outage | Resilience4j integration. Requires testing under failure conditions. |
 | No structured LLM call logging | LLM failures are logged but not structured for querying; no Micrometer metrics | `LlmCallLogger` utility + Micrometer counters/timers. Planned but not implemented. |
 | Default 3.0 scores on eval timeout | Candidates receive misleading low scores when OpenAI is slow | Pending evaluation state + async retry processor. Planned but not implemented. |
+
+
+---
+
+## 21. Natural Interviewer -- Brain Architecture
+
+> Feature branch: `feature/natural-interviewer`
+> Feature flag: `interview.use-new-brain: false` (default)
+> When enabled: replaces InterviewerAgent + PromptBuilder + 7 background agents
+
+### 21.1 The Three Agents
+
+| Agent | Model | Runs When | Replaces |
+|-------|-------|-----------|----------|
+| TheConductor | gpt-4o (streaming) | Every candidate message (synchronous) | InterviewerAgent + PromptBuilder |
+| TheAnalyst | gpt-4o-mini | After every exchange (fire-and-forget) | SmartOrchestrator + 6 others |
+| TheStrategist | gpt-4o-mini | Every 5 turns (fire-and-forget) | None (new) |
+
+**TheConductor**: Reads InterviewerBrain, applies SilenceIntelligence (RESPOND/SILENT/WAIT), builds 13-section prompt via NaturalPromptBuilder, streams response, applies OpenQuestionTransformer, clears actions, tracks acknowledgments. CODING GATE type-aware (CODING/DSA only).
+
+**TheAnalyst**: Single gpt-4o-mini call per exchange. Updates CandidateProfile (18 fields), HypothesisRegistry, ClaimRegistry, InterviewGoals, ThoughtThread, ActionQueue, ExchangeScores, BloomsTracker, TopicSignalBudget, ZDP levels. Auto-queues REDUCE_LOAD, RESTORE_SAFETY, PRODUCTIVE_UNKNOWN, MENTAL_SIMULATION, ownership probes. Silent failure.
+
+**TheStrategist**: Reviews full brain every 5 turns. Updates InterviewStrategy with selfCritique. Abandons stale hypotheses. Queues FORMATIVE_FEEDBACK. Calibrates recommendedTokens (60-180).
+
+### 21.2 InterviewerBrain (30+ fields)
+
+sessionId, userId, candidateProfile (18 fields), hypothesisRegistry, claimRegistry, interviewGoals, thoughtThread, currentStrategy, actionQueue, interviewType, questionDetails + ScoringRubric, turnCount, usedAcknowledgments, topicSignalBudget, bloomsTracker, exchangeScores, hintOutcomes, topicHistory, challengeSuccessRate, zdpEdge, questionTypeHistory, formativeFeedbackGiven, currentCode, programmingLanguage, personality, targetCompany, experienceLevel, rollingTranscript, earlierContext, hintsGiven, startedAt, lastActivityAt.
+
+### 21.3 CandidateProfile (18 fields)
+
+thinkingStyle, reasoningPattern, knowledgeMap, communicationStyle, pressureResponse, avoidancePatterns, overallSignal, currentState, anxietyLevel, avgAnxietyLevel, flowState, trajectory, psychologicalSafety, linguisticPattern, abstractionLevel, selfRepairCount, cognitiveLoadSignal, unknownHandlingPattern.
+
+### 21.4 ActionQueue (15 types)
+
+TEST_HYPOTHESIS, SURFACE_CONTRADICTION, ADVANCE_GOAL, PROBE_DEPTH, REDIRECT, WRAP_UP_TOPIC, END_INTERVIEW, EMOTIONAL_ADJUST, REDUCE_LOAD, MAINTAIN_FLOW, RESTORE_SAFETY, PRODUCTIVE_UNKNOWN, REDUCE_PRESSURE, MENTAL_SIMULATION, FORMATIVE_FEEDBACK.
+
+### 21.5 NaturalPromptBuilder -- 13 Sections
+
+1-IDENTITY (static), 2-SITUATION, 3-CANDIDATE (after turn 2), 4-THOUGHT_THREAD, 5-GOALS + Blooms, 6-HYPOTHESES (top 2), 7-CONTRADICTIONS (after turn 5), 8-STRATEGY, 9-ACTION, 10-CODE (REVIEW only), 11-TESTS, 12-HISTORY (6 turns), 13-HARD_RULES (static + acknowledgments).
+
+### 21.6 Redis Keyspace
+
+`brain:{sessionId}` TTL 3h (new). `interview:session:{sessionId}:memory` TTL 2h (old). Both coexist.
+
+---
+
+## 22. Interview Objectives (replacing Stage Machine)
+
+### 22.1 CODING/DSA (9 required + 3 optional)
+
+problem_shared -> approach_understood -> approach_justified -> solution_implemented -> complexity_owned -> edge_cases_explored -> reasoning_depth_assessed -> mental_simulation_tested -> interview_closed. Optional: optimization_explored, follow_up_variant, reach_evaluate_level.
+
+### 22.2 BEHAVIORAL (8 required + 2 optional)
+
+psychological_safety -> star_q1_complete -> star_q1_ownership -> star_q2_complete -> star_q2_ownership -> star_q3_complete -> learning_demonstrated -> interview_closed. Optional: star_q4_complete, situational_judgment.
+
+### 22.3 SYSTEM_DESIGN (8 required + 2 optional)
+
+problem_shared -> requirements_gathered -> high_level_design -> component_deep_dive -> tradeoffs_acknowledged -> failure_modes_explored -> scalability_addressed -> interview_closed. Optional: alternative_considered, data_model_defined.
+
+### 22.4 FlowGuard (4 Rules)
+
+1. Problem presented by turn 4. 2. Force wrap-up when overtime. 3. Nudge after 8 turns stalled. 4. Pace warning when behind schedule.
+
+---
+
+## 23. Knowledge Adjacency Map
+
+12 topic groups: hash_map_usage, bfs_algorithm, recursion_correct, dp_pattern_recognized, binary_tree_traversal, time_complexity_stated, sorting_algorithm, two_pointer_pattern, high_level_design_done, requirements_gathered, gave_action, star_situation_given. Each has 3+ adjacent topics with open probe questions, Blooms level (1-6), diagnostic value (0-1), isOrthogonal flag. Methods: getNextProbe(), getAdjacentTopicsForSuccessRate(), toHypothesis().
+
+---
+
+## 24. Evaluation System (8 Dimensions)
+
+### 24.1 Dimensions and Weights
+
+problem_solving (20%), algorithm_depth (15%), code_quality (15%), communication (15%), efficiency (10%), testing (10%), initiative (10%), learning_agility (5%). Sum = 100%.
+
+### 24.2 Score Adjustments
+
++0.75 all dims for high anxiety (avg > 0.7). +0.50 for moderate (avg > 0.5). +0.50 per exchange for productive struggle. +1.0 algorithm for schema-driven reasoning. +1.0 code_quality for abstraction L4+. Cap 10.0.
+
+### 24.3 Anti-Halo Architecture
+
+Exchange scores computed independently per turn. Dimension scores = recency-weighted average. Holistic transcript for narrative only. Exchange scores trusted over impression on conflict.
+
+### 24.4 Brain Enrichment (15 signals in eval prompt)
+
+Confirmed hypotheses, incorrect claims, exchange score summary, anxiety adjustment, productive struggle count, reasoning pattern, linguistic pattern, psychological safety, hint outcomes, Blooms levels, ZDP edge topics, challenge success rate, interleaving, STAR ownership, scoring rubric.
+
+---
+
+## 25. Scientific Research Basis
+
+10 academic domains implemented:
+
+| Domain | Key Research | Implementation |
+|--------|-------------|----------------|
+| Cognitive Science | Sweller 1988, Chi 1981 | Cognitive load detection, schema/search reasoning |
+| Psycholinguistics | Hyland 1996, Schiffrin 1987 | Anxiety detection, dismissal probing, specificity 1-4 |
+| Educational Psychology | Bloom 2001, Vygotsky 1978, Feuerstein 1980, Bjork 1994 | Blooms tracker, ZDP targeting, hint generalization, 70% calibration |
+| Behavioral Science | Thorndike 1920, Kahneman 1974, Behroozi 2019 | Anti-halo scoring, anchoring prevention, observer effect |
+| Affective Computing | Picard 1997, Lupien 2007 | Anxiety +0.5/+0.75 adjustment |
+| Org Psychology | Schmidt/Hunter 1998, Campion 1994 | Initiative + learning agility, structured objectives |
+| Information Theory | Shannon 1948, Cronbach 1951 | Signal depletion, dimension independence |
+| Neuroscience | Bjork 1994, Kornell/Bjork 2008 | Productive struggle bonus, topic interleaving |
+| Social Psychology | Edmondson 1999, Bernieri 1996 | Psychological safety, rapport building |
+| CS Research | Brooks 1983, Wiedenbeck 1991 | Abstraction levels 1-5, mental simulation |
+
+---
+
+## 26. Feature Flag -- Natural Interviewer
+
+```yaml
+interview:
+  use-new-brain: false  # default
+```
+
+When false: InterviewerAgent + PromptBuilder + old agents. When true: TheConductor + NaturalPromptBuilder + TheAnalyst + TheStrategist + FlowGuard + BrainService.
+
+Migration: Phase 1 false (current) -> Phase 2 internal -> Phase 3 beta 10% -> Phase 4 all users -> Phase 5 remove old agents (30 days). Rollback: set false, immediate revert, no migration needed.
