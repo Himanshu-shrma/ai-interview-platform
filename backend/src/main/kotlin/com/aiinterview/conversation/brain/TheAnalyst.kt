@@ -83,6 +83,14 @@ class TheAnalyst(
 You are the interview analyst. After each exchange, update the interviewer's mental model.
 You do NOT generate responses to the candidate.
 
+CRITICAL JSON RULES:
+1. Return ONLY valid JSON. Start with { end with }. No markdown. No backticks.
+2. newClaims MUST be array of OBJECTS: [{"claim":"...","topic":"...","correctness":"..."}]
+   WRONG: ["the array is sorted"]  RIGHT: [{"claim":"the array is sorted","topic":"sorting","correctness":"correct"}]
+3. goalsCompleted MUST be array of strings: ["approach_understood"]
+4. All optional fields: use null not missing key.
+5. All array fields: use [] not null when empty.
+
 BRAIN STATE:
 Type: ${brain.interviewType} | Turn: ${brain.turnCount}
 Signal: ${brain.candidateProfile.overallSignal} | Style: ${brain.candidateProfile.thinkingStyle}
@@ -206,10 +214,43 @@ PSEUDO CODE DETECTION:
         }
     }
 
-    private fun parseAnalystResponse(json: String): AnalystDecision = try {
-        objectMapper.readValue(json, AnalystDecision::class.java)
+    private val failureCount = java.util.concurrent.atomic.AtomicInteger(0)
+    private val callCount = java.util.concurrent.atomic.AtomicInteger(0)
+
+    private fun parseAnalystResponse(json: String): AnalystDecision {
+        callCount.incrementAndGet()
+        return try {
+            objectMapper.readValue(json, AnalystDecision::class.java)
+        } catch (e: Exception) {
+            val failures = failureCount.incrementAndGet()
+            val total = callCount.get()
+            val rate = if (total > 0) failures.toFloat() / total else 0f
+            log.warn("TheAnalyst full parse failed ({}/{}={:.0f}%): {}", failures, total, rate * 100, e.message)
+            if (rate > 0.3f && total > 5) {
+                log.error("TheAnalyst FAILURE RATE HIGH: {}/{} turns failing ({}%). Check LLM provider and JSON schema.",
+                    failures, total, (rate * 100).toInt())
+            }
+            tryPartialParse(json)
+        }
+    }
+
+    private fun tryPartialParse(json: String): AnalystDecision = try {
+        val node = objectMapper.readTree(json)
+        val goals = runCatching {
+            node.get("goalsCompleted")?.filter { it.isTextual }?.map { it.asText() }?.filter { it.isNotBlank() } ?: emptyList()
+        }.getOrElse { emptyList() }
+        val thought = runCatching { node.get("thoughtThreadAppend")?.asText() ?: "" }.getOrElse { "" }
+        val intent = runCatching { node.get("candidateIntent")?.asText() }.getOrNull()
+        val nextAction = runCatching {
+            val a = node.get("nextAction") ?: return@runCatching null
+            if (!a.has("type")) return@runCatching null
+            NextActionDto(type = a.get("type").asText(), description = a.get("description")?.asText() ?: "",
+                priority = a.get("priority")?.asInt() ?: 3, bloomsLevel = 3, expiresInTurns = 3)
+        }.getOrNull()
+        log.info("TheAnalyst partial parse: goals={} thought='{}' intent={} action={}", goals, thought.take(50), intent, nextAction?.type)
+        AnalystDecision(goalsCompleted = goals, thoughtThreadAppend = thought, nextAction = nextAction, candidateIntent = intent)
     } catch (e: Exception) {
-        log.warn("Failed to parse analyst response: {}", e.message)
+        log.warn("TheAnalyst partial parse also failed: {}", e.message)
         AnalystDecision()
     }
 
