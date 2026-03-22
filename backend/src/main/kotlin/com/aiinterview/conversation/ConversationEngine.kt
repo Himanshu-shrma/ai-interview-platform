@@ -108,7 +108,7 @@ class ConversationEngine(
         brainService.appendTranscriptTurn(sessionId, "CANDIDATE", content)
 
         // Also persist to old memory for report generation compatibility
-        try { redisMemoryService.appendTranscriptTurn(sessionId, "CANDIDATE", content) } catch (_: Exception) {}
+        try { redisMemoryService.appendTranscriptTurn(sessionId, "CANDIDATE", content) } catch (e: Exception) { log.debug("Non-critical operation failed: {}", e.message) }
 
         transition(sessionId, InterviewState.CandidateResponding)
 
@@ -118,11 +118,11 @@ class ConversationEngine(
 
         // FlowGuard safety check
         brainFlowGuard.check(brain, state)?.let { guardAction ->
-            try { brainService.addAction(sessionId, guardAction) } catch (_: Exception) {}
+            try { brainService.addAction(sessionId, guardAction) } catch (e: Exception) { log.debug("Non-critical operation failed: {}", e.message) }
         }
 
         // Increment turn count
-        try { brainService.incrementTurnCount(sessionId) } catch (_: Exception) {}
+        try { brainService.incrementTurnCount(sessionId) } catch (e: Exception) { log.debug("Non-critical operation failed: {}", e.message) }
 
         // Generate and stream AI response via TheConductor
         val aiResponse = theConductor.respond(sessionId, content, brain, state)
@@ -258,7 +258,7 @@ class ConversationEngine(
             } catch (e: Exception) {
                 log.error("Report generation failed for session {}: {}", sessionId, e.message)
             } finally {
-                try { brainService.deleteBrain(sessionId) } catch (_: Exception) {}
+                try { brainService.deleteBrain(sessionId) } catch (e: Exception) { log.debug("Non-critical operation failed: {}", e.message) }
                 cancelSessionScope(sessionId)
             }
         }
@@ -354,7 +354,7 @@ class ConversationEngine(
                 b.copy(questionDetails = q, turnCount = 0,
                     interviewGoals = BrainObjectivesRegistry.forCategory(memory.category))
             }
-        } catch (_: Exception) {}
+        } catch (e: Exception) { log.debug("Non-critical operation failed: {}", e.message) }
 
         log.info("Session {} transitioned to question {} of {}", sessionId, nextIndex + 1, memory.totalQuestions)
     }

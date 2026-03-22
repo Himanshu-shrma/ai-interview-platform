@@ -2,6 +2,7 @@ package com.aiinterview.interview.ws
 
 import com.aiinterview.code.service.CodeExecutionService
 import com.aiinterview.conversation.ConversationEngine
+import com.aiinterview.conversation.brain.BrainService
 import com.aiinterview.conversation.HintGenerator
 import com.aiinterview.conversation.InterviewState
 import com.aiinterview.interview.repository.ConversationMessageRepository
@@ -41,6 +42,7 @@ class InterviewWebSocketHandler(
     private val evaluationReportRepository: EvaluationReportRepository,
     private val sessionQuestionRepository: SessionQuestionRepository,
     private val questionRepository: QuestionRepository,
+    private val brainService: BrainService,
 ) : WebSocketHandler {
 
     /** Fire-and-forget scope for code execution (same pattern as ConversationEngine). */
@@ -326,6 +328,8 @@ class InterviewWebSocketHandler(
                 redisMemoryService.updateMemory(sessionId) { mem ->
                     mem.copy(currentCode = msg.code, programmingLanguage = msg.language)
                 }
+                // Sync code to brain for AI code awareness
+                try { brainService.updateBrain(sessionId) { b -> b.copy(currentCode = msg.code, programmingLanguage = msg.language) } } catch (_: Exception) {}
             }
 
             "REQUEST_HINT" -> {

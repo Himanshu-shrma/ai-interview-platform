@@ -107,6 +107,11 @@ class TheConductor(
         brain: InterviewerBrain,
         state: InterviewState,
     ): String {
+        // Warn if TheAnalyst appears stuck
+        if (brain.turnCount >= 5 && brain.interviewGoals.completed.isEmpty()) {
+            log.warn("POSSIBLE ANALYST FAILURE: session={} has {} turns but NO goals completed", sessionId, brain.turnCount)
+        }
+
         // CODING GATE — only for coding types
         val isCodingInterview = brain.interviewType.uppercase() in setOf("CODING", "DSA")
         val hasMeaningfulCode = isMeaningfulCode(brain.currentCode)

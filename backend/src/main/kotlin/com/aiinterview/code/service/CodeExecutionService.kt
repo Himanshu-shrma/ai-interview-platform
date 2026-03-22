@@ -241,7 +241,7 @@ class CodeExecutionService(
             val token  = judge0Client.submit(code, languageId, stdin)
             val result = judge0Client.pollResult(token)
             val actual = result.stdout?.trimEnd()
-            val passed = result.status?.id == 3 && (expected == null || actual?.trimEnd() == expected.trimEnd())
+            val passed = result.status?.id == 3 && (expected == null || outputMatches(actual, expected))
             TestResult(
                 passed    = passed,
                 input     = stdin,
@@ -272,6 +272,25 @@ class CodeExecutionService(
             log.warn("Failed to parse test cases JSON: {}", e.message)
             emptyList()
         }
+    }
+
+    /** Flexible output comparison — handles set/list format differences, whitespace, quotes. */
+    private fun outputMatches(actual: String?, expected: String): Boolean {
+        if (actual == null) return false
+        val a = actual.trim()
+        val e = expected.trim()
+        if (a == e) return true
+        // Normalize: remove brackets, quotes, split, sort, compare
+        val normalize = { s: String ->
+            s.removePrefix("[").removeSuffix("]")
+                .removePrefix("{").removeSuffix("}")
+                .removePrefix("(").removeSuffix(")")
+                .split(Regex("[,\\s]+"))
+                .map { it.trim().trim('"').trim('\'') }
+                .filter { it.isNotBlank() }
+                .sorted()
+        }
+        return normalize(a) == normalize(e)
     }
 
     private fun JsonNode.textOrNull(): String? =
