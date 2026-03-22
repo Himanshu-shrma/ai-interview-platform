@@ -29,12 +29,12 @@ git branch --show-current
 
 | Phase | Tasks | Done | Status |
 |-------|-------|------|--------|
-| 1 — Foundation Brain | 8 | 1 | In progress |
+| 1 — Foundation Brain | 8 | 2 | In progress |
 | 2 — Natural Intelligence | 10 | 0 | Not started |
 | 3 — Scientific Validity | 12 | 0 | Not started |
 | 4 — Advanced Cognition | 8 | 0 | Not started |
 | 5 — Deep Research Fixes | 10 | 0 | Not started |
-| **TOTAL** | **48** | **1** | **2%** |
+| **TOTAL** | **48** | **2** | **4%** |
 
 Minimum for merge to master: Phase 1 + Phase 2 complete.
 
@@ -64,7 +64,7 @@ All enums: ThinkingStyle, ReasoningPattern, CommunicationStyle, PressureResponse
 
 ---
 
-### TASK-002 [N] XL — BrainService + Redis Persistence
+### TASK-002 [D] XL — BrainService + Redis Persistence
 **Requires:** TASK-001
 **Replaces:** RedisMemoryService (extend, don't delete)
 **File:** `conversation/brain/BrainService.kt`
