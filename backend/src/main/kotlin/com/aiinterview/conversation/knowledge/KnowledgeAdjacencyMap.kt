@@ -115,6 +115,17 @@ object KnowledgeAdjacencyMap {
             .firstOrNull()
     }
 
+    /** Returns adjacent topics filtered by target Bloom's level based on success rate. */
+    fun getAdjacentTopicsForSuccessRate(topic: String, successRate: Float): List<AdjacentTopic> {
+        val targetBloom = when {
+            successRate > 0.85f -> 5
+            successRate > 0.70f -> 4
+            successRate > 0.55f -> 3
+            else -> 2
+        }
+        return getAdjacentTopics(topic).filter { it.bloomsLevel >= targetBloom }
+    }
+
     /** Converts an adjacent topic to a testable hypothesis. */
     fun toHypothesis(topic: AdjacentTopic, turnCount: Int): Hypothesis = Hypothesis(
         id = "adj_${topic.topicId}_t$turnCount",

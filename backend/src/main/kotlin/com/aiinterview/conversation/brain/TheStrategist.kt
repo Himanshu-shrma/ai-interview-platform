@@ -52,6 +52,15 @@ class TheStrategist(
                 brainService.updateHypothesis(sessionId, id, HypothesisStatus.ABANDONED, "Abandoned by strategist after 10+ turns")
             }
 
+            // Queue formative feedback if struggling for 2+ reviews (TASK-043)
+            if (brain.challengeSuccessRate < 0.5f && brain.currentStrategy.updatedAtTurn > 5) {
+                brainService.addAction(sessionId, IntendedAction(
+                    id = "formative_${brain.turnCount}", type = ActionType.FORMATIVE_FEEDBACK,
+                    description = "Candidate struggling. Offer a PRINCIPLE without answer. 'Let me offer a perspective: [general principle].' NEVER give the solution.",
+                    priority = 3, expiresAfterTurn = brain.turnCount + 5, source = ActionSource.META_STRATEGY,
+                ))
+            }
+
             log.info("TheStrategist updated strategy for session={} at turn={}", sessionId, brain.turnCount)
         } catch (e: Exception) {
             log.warn("TheStrategist failed silently for session={}: {}", sessionId, e.message)
@@ -79,6 +88,11 @@ GOALS REMAINING: $remainingGoals
 OPEN HYPOTHESES: $openHypotheses
 UNSURFACED CONTRADICTIONS: $unsurfaced
 RECENT SCORES: $recentScores
+
+CHALLENGE SUCCESS RATE: ${"%.0f".format(brain.challengeSuccessRate * 100)}%
+${when { brain.challengeSuccessRate > 0.85f -> "TOO EASY — raise difficulty immediately"
+    brain.challengeSuccessRate < 0.50f -> "TOO HARD — reduce difficulty, find strengths"
+    else -> "OPTIMAL (target 60-80%)" }}
 
 THOUGHT THREAD: ${brain.thoughtThread.thread.takeLast(300).ifBlank { "empty" }}
 

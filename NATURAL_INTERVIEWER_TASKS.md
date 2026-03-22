@@ -32,9 +32,9 @@ git branch --show-current
 | 1 — Foundation Brain | 8 | 8 | COMPLETE |
 | 2 — Natural Intelligence | 10 | 10 | COMPLETE |
 | 3 — Scientific Validity | 12 | 12 | COMPLETE |
-| 4 — Advanced Cognition | 8 | 0 | Not started |
-| 5 — Deep Research Fixes | 10 | 0 | Not started |
-| **TOTAL** | **48** | **30** | **63%** |
+| 4 — Advanced Cognition | 8 | 8 | COMPLETE |
+| 5 — Deep Research Fixes | 10 | 10 | COMPLETE |
+| **TOTAL** | **48** | **48** | **100%** |
 
 Minimum for merge to master: Phase 1 + Phase 2 complete.
 

@@ -134,7 +134,8 @@ class TheConductor(
 
         registry.sendMessage(sessionId, OutboundMessage.AiChunk(delta = "", done = true))
 
-        val responseText = fullResponse.toString()
+        val rawResponse = fullResponse.toString()
+        val responseText = OpenQuestionTransformer.transform(rawResponse)
         if (responseText.isNotBlank()) {
             persistResponse(sessionId, responseText)
             brainService.appendTranscriptTurn(sessionId, "AI", responseText)

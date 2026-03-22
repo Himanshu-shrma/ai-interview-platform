@@ -279,6 +279,35 @@ class EvaluationAgent(
         sb.appendLine("\nINITIATIVE SCORE (0-10): Did candidate go beyond minimum? Proactive edge cases, voluntary optimizations, genuine curiosity = high.")
         sb.appendLine("LEARNING AGILITY SCORE (0-10): How effectively did candidate learn during interview? Hint generalization, self-correction, good 'why' questions = high.")
 
+        // Phase 4+5 signals
+        // ZDP edge topics
+        brain.zdpEdge.values.filter { it.canDoWithPrompt && !it.canDoAlone }.takeIf { it.isNotEmpty() }?.let { edge ->
+            sb.appendLine("ZDP EDGE (knows with help): ${edge.joinToString(", ") { it.topic }}. Growth areas near current capability.")
+        }
+        // Challenge calibration
+        sb.appendLine("DIFFICULTY: ${(brain.challengeSuccessRate * 100).toInt()}% success rate. ${
+            when { brain.challengeSuccessRate > 0.85f -> "Interview may have been too easy."; brain.challengeSuccessRate < 0.50f -> "Interview may have been too hard."; else -> "Optimal calibration." }
+        }")
+        // Interleaving
+        val interleavedTopics = brain.topicHistory.distinct().filter { t -> brain.topicHistory.count { it == t } > 1 }
+        if (interleavedTopics.isNotEmpty()) sb.appendLine("INTERLEAVING: Topics revisited: ${interleavedTopics.joinToString(", ")}. Return-visit performance tests generalization.")
+        // STAR ownership (behavioral)
+        if (brain.interviewType.uppercase() == "BEHAVIORAL") {
+            val ownershipGoals = brain.interviewGoals.completed.count { it.contains("ownership") }
+            val stories = brain.interviewGoals.completed.count { it.startsWith("star_q") && it.endsWith("_complete") }
+            if (stories > 0) sb.appendLine("OWNERSHIP: $ownershipGoals/$stories stories had clear personal ownership.")
+        }
+        // Formative feedback
+        if (brain.formativeFeedbackGiven > 0) sb.appendLine("FORMATIVE FEEDBACK: Given ${brain.formativeFeedbackGiven}x. Normal — does not penalize candidate.")
+        // Scoring rubric
+        brain.questionDetails.scoringRubric?.let { rubric ->
+            if (rubric.algorithmIndicators.isNotEmpty()) {
+                sb.appendLine("RUBRIC: ${rubric.algorithmIndicators.joinToString(", ")}")
+            }
+        }
+        // Dimension independence reminder
+        sb.appendLine("\nDIMENSION INDEPENDENCE: Score each dimension INDEPENDENTLY. algorithm_depth = WHY it works (not just correct choice). code_quality = readability (not complexity).")
+
         sb.appendLine("===========================")
         return sb.toString()
     }

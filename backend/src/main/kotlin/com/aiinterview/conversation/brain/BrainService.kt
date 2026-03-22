@@ -47,7 +47,7 @@ class BrainService(
             sessionId = sessionId,
             userId = userId,
             interviewType = interviewType,
-            questionDetails = question,
+            questionDetails = question.copy(scoringRubric = generateBasicRubric(question)),
             interviewGoals = goals,
             personality = personality,
             targetCompany = targetCompany,
@@ -210,10 +210,53 @@ class BrainService(
         brain.copy(bloomsTracker = brain.bloomsTracker + (topic to level))
     }
 
+    // ── Phase 4+5 methods ──
+
+    suspend fun appendTopicToHistory(sessionId: UUID, topic: String) = updateBrain(sessionId) { brain ->
+        brain.copy(topicHistory = (brain.topicHistory + topic).takeLast(20))
+    }
+
+    suspend fun updateChallengeSuccessRate(sessionId: UUID, wasSuccess: Boolean) = updateBrain(sessionId) { brain ->
+        val tested = brain.hypothesisRegistry.hypotheses.count { it.status != HypothesisStatus.OPEN }.coerceAtLeast(1).toFloat()
+        val newRate = if (wasSuccess) ((brain.challengeSuccessRate * (tested - 1)) + 1f) / tested
+        else ((brain.challengeSuccessRate * (tested - 1))) / tested
+        brain.copy(challengeSuccessRate = newRate.coerceIn(0f, 1f))
+    }
+
+    suspend fun updateZdpLevel(sessionId: UUID, topic: String, canDoAlone: Boolean, canDoWithPrompt: Boolean) = updateBrain(sessionId) { brain ->
+        brain.copy(zdpEdge = brain.zdpEdge + (topic to ZdpLevel(canDoAlone, canDoWithPrompt, !canDoAlone && !canDoWithPrompt, topic)))
+    }
+
+    suspend fun recordQuestionType(sessionId: UUID, type: String) = updateBrain(sessionId) { brain ->
+        brain.copy(questionTypeHistory = (brain.questionTypeHistory + type).takeLast(30))
+    }
+
+    suspend fun incrementFormativeFeedback(sessionId: UUID) = updateBrain(sessionId) { brain ->
+        brain.copy(formativeFeedbackGiven = brain.formativeFeedbackGiven + 1)
+    }
+
     suspend fun appendTranscriptTurn(sessionId: UUID, role: String, content: String) = updateBrain(sessionId) { brain ->
         val newTurn = BrainTranscriptTurn(role = role, content = content)
         val updated = brain.rollingTranscript + newTurn
         brain.copy(rollingTranscript = if (updated.size > 8) updated.takeLast(8) else updated)
+    }
+
+    private fun generateBasicRubric(question: InterviewQuestion): ScoringRubric {
+        val approach = question.optimalApproach.lowercase()
+        return ScoringRubric(
+            algorithmIndicators = buildList {
+                if (approach.contains("hash")) add("uses hash map/set")
+                if (approach.contains("two pointer")) add("uses two pointers")
+                if (approach.contains("dp") || approach.contains("dynamic")) add("uses DP")
+                if (approach.contains("bfs")) add("uses BFS")
+                if (approach.contains("dfs")) add("uses DFS")
+                if (approach.contains("sort")) add("considers sorting")
+                add("correct algorithm choice")
+                add("states correct time complexity")
+            },
+            communicationIndicators = listOf("explained approach before coding", "talked through reasoning", "asked clarifying question"),
+            edgeCasesRequired = listOf("empty input", "single element", "all same values"),
+        )
     }
 
     @PreDestroy

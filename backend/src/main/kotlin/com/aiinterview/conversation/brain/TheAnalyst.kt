@@ -154,6 +154,17 @@ BLOOM'S LEVELS (for bloomsLevelUpdate):
   1=REMEMBER (recalls fact), 2=UNDERSTAND (explains concept), 3=APPLY (uses correctly),
   4=ANALYZE (compares/contrasts), 5=EVALUATE (judges trade-offs), 6=CREATE (designs novel)
   Format: {"topic_name": level}. Only update if higher than recorded.
+
+STAR OWNERSHIP (BEHAVIORAL ONLY):
+  ownershipProbeNeeded: true if candidate used "we" > 3 times without clarifying individual role. Triggers ownership probe.
+
+ZDP DETECTION:
+  zdpUpdate: {"topic":"name","canDoAlone":bool,"canDoWithPrompt":bool} or null.
+  canDoAlone = answered correctly without probing. canDoWithPrompt = needed hint but then got it.
+
+QUESTION TYPE CLASSIFICATION:
+  questionType: classify the AI's question: "assumption"|"implication"|"clarifying"|"evidence"|"viewpoint"|"unknown".
+  Target distribution: assumption=40%, implication=25%, clarifying=20%, evidence=10%, viewpoint=5%.
         """.trimIndent()
     }
 
@@ -338,6 +349,47 @@ BLOOM'S LEVELS (for bloomsLevelUpdate):
                 cp.copy(avgAnxietyLevel = ((cp.avgAnxietyLevel * (n - 1)) + newLevel) / n)
             }
         }
+
+        // 16. Topic interleaving detection (TASK-031)
+        decision.topicSignalUpdate?.keys?.forEach { topic ->
+            val history = brain.topicHistory
+            val prevIndex = history.dropLast(1).lastIndexOf(topic)
+            if (prevIndex >= 0 && prevIndex < history.size - 2) {
+                brainService.addAction(sessionId, IntendedAction(
+                    id = "interleave_${topic}_${brain.turnCount}", type = ActionType.PROBE_DEPTH,
+                    description = "INTERLEAVING: You covered $topic earlier. Ask a VARIANT — different surface, same concept. Tests generalization.",
+                    priority = 3, expiresAfterTurn = brain.turnCount + 4, source = ActionSource.ANALYST,
+                    isInterleavedVariant = true, originalTopic = topic,
+                ))
+            }
+            brainService.appendTopicToHistory(sessionId, topic)
+        }
+
+        // 17. Challenge success rate (TASK-032)
+        decision.hypothesisUpdates.forEach { u ->
+            if (u.newStatus != null) {
+                brainService.updateChallengeSuccessRate(sessionId, u.newStatus == "confirmed")
+            }
+        }
+
+        // 18. STAR ownership probe (TASK-033)
+        if (decision.ownershipProbeNeeded && brain.interviewType.uppercase() == "BEHAVIORAL") {
+            brainService.addAction(sessionId, IntendedAction(
+                id = "ownership_${brain.turnCount}", type = ActionType.PROBE_DEPTH,
+                description = "OWNERSHIP GAP: Candidate used 'we' without clarifying personal role. Ask: 'What was YOUR specific contribution?'",
+                priority = 1, expiresAfterTurn = brain.turnCount + 2, source = ActionSource.ANALYST,
+            ))
+        }
+
+        // 19. ZDP update (TASK-037)
+        decision.zdpUpdate?.let { z ->
+            brainService.updateZdpLevel(sessionId, z.topic, z.canDoAlone, z.canDoWithPrompt)
+        }
+
+        // 20. Question type tracking (TASK-044)
+        decision.questionType?.let { qt ->
+            brainService.recordQuestionType(sessionId, qt)
+        }
     }
 
     private inline fun <reified T : Enum<T>> safeEnum(value: String): T? = try {
@@ -361,6 +413,9 @@ data class AnalystDecision(
     val bloomsLevelUpdate: Map<String, Int>? = null,
     val topicSignalUpdate: Map<String, Float>? = null,
     val adjacentTopicsToProbe: List<String> = emptyList(),
+    val ownershipProbeNeeded: Boolean = false,
+    val zdpUpdate: ZdpUpdateDto? = null,
+    val questionType: String? = null,
 )
 
 @JsonIgnoreProperties(ignoreUnknown = true)
@@ -386,3 +441,5 @@ data class ContradictionDto(val claim1: String = "", val claim2: String = "", va
 data class NextActionDto(val type: String = "ADVANCE_GOAL", val description: String = "", val priority: Int = 3, val bloomsLevel: Int = 3, val expiresInTurns: Int = 3)
 @JsonIgnoreProperties(ignoreUnknown = true)
 data class ExchangeScoreDto(val dimension: String = "", val score: Float = 0f, val evidence: String = "", val bloomsLevel: Int = 3)
+@JsonIgnoreProperties(ignoreUnknown = true)
+data class ZdpUpdateDto(val topic: String = "", val canDoAlone: Boolean = false, val canDoWithPrompt: Boolean = false)

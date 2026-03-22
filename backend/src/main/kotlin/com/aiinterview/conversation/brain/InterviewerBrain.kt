@@ -36,6 +36,12 @@ data class InterviewerBrain(
     val rollingTranscript: List<BrainTranscriptTurn> = emptyList(),
     val earlierContext: String = "",
     val hintsGiven: Int = 0,
+    // Phase 4+5 fields
+    val topicHistory: List<String> = emptyList(),
+    val challengeSuccessRate: Float = 0.7f,
+    val zdpEdge: Map<String, ZdpLevel> = emptyMap(),
+    val questionTypeHistory: List<String> = emptyList(),
+    val formativeFeedbackGiven: Int = 0,
     val startedAt: Instant = Instant.now(),
     val lastActivityAt: Instant = Instant.now(),
 )
@@ -205,6 +211,8 @@ data class IntendedAction(
     val expiresAfterTurn: Int,
     val source: ActionSource,
     val bloomsLevel: Int = 3,
+    val isInterleavedVariant: Boolean = false,
+    val originalTopic: String? = null,
 )
 
 enum class ActionType {
@@ -212,7 +220,7 @@ enum class ActionType {
     PROBE_DEPTH, REDIRECT, WRAP_UP_TOPIC, END_INTERVIEW,
     EMOTIONAL_ADJUST, REDUCE_LOAD, MAINTAIN_FLOW,
     RESTORE_SAFETY, PRODUCTIVE_UNKNOWN, REDUCE_PRESSURE,
-    MENTAL_SIMULATION,
+    MENTAL_SIMULATION, FORMATIVE_FEEDBACK,
 }
 
 enum class ActionSource {
@@ -231,6 +239,7 @@ data class InterviewQuestion(
     val difficulty: String = "",
     val category: String = "",
     val knowledgeTopics: List<String> = emptyList(),
+    val scoringRubric: ScoringRubric? = null,
 )
 
 // ═══ Per-Turn Scoring ═══
@@ -257,6 +266,28 @@ data class InterviewState(
     val currentPhaseLabel: String,
     val allRequiredComplete: Boolean,
     val bloomsLevelReached: Map<String, Int> = emptyMap(),
+)
+
+// ═══ Zone of Proximal Development ═══
+
+@JsonIgnoreProperties(ignoreUnknown = true)
+data class ZdpLevel(
+    val canDoAlone: Boolean = false,
+    val canDoWithPrompt: Boolean = false,
+    val cannotDo: Boolean = false,
+    val topic: String = "",
+)
+
+// ═══ Scoring Rubric ═══
+
+@JsonIgnoreProperties(ignoreUnknown = true)
+data class ScoringRubric(
+    val algorithmIndicators: List<String> = emptyList(),
+    val codeQualityIndicators: List<String> = emptyList(),
+    val communicationIndicators: List<String> = emptyList(),
+    val edgeCasesRequired: List<String> = emptyList(),
+    val optimalTimeComplexity: String = "",
+    val optimalSpaceComplexity: String = "",
 )
 
 // ═══ Hint Outcome Tracking ═══
