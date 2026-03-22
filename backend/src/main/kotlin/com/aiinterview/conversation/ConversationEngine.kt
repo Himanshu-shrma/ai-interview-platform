@@ -8,13 +8,10 @@ import com.aiinterview.conversation.brain.TheAnalyst
 import com.aiinterview.conversation.brain.TheConductor
 import com.aiinterview.conversation.brain.TheStrategist
 import com.aiinterview.conversation.brain.computeBrainInterviewState
-import com.aiinterview.conversation.objectives.FlowGuard
-import com.aiinterview.conversation.objectives.ObjectiveTracker
-import com.aiinterview.conversation.objectives.ObjectivesRegistry
-import com.aiinterview.conversation.objectives.computeObjectiveState
 import com.aiinterview.interview.dto.toInternalDto
 import com.aiinterview.interview.model.ConversationMessage
 import com.aiinterview.interview.repository.ConversationMessageRepository
+import com.aiinterview.interview.repository.InterviewSessionRepository
 import com.aiinterview.interview.repository.SessionQuestionRepository
 import com.aiinterview.interview.service.QuestionService
 import com.aiinterview.interview.service.RedisMemoryService
@@ -30,45 +27,37 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.reactor.awaitSingle
+import kotlinx.coroutines.reactor.awaitSingleOrNull
 import kotlinx.coroutines.withContext
 import org.slf4j.LoggerFactory
 import org.springframework.context.annotation.Lazy
 import org.springframework.stereotype.Service
+import java.time.Duration
+import java.time.Instant
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Central orchestrator for the AI interview conversation.
  *
- * Responsibilities:
- * - State machine transitions (updating Redis + sending STATE_CHANGE WS frames)
- * - Routing candidate messages to the Interviewer Agent
- * - Kicking off background analysis (AgentOrchestrator — fire-and-forget)
- * - Driving the interview start sequence (opening question presentation)
- *
- * [agentOrchestrator] uses @Lazy to break the circular dependency:
- *   ConversationEngine → AgentOrchestrator → InterviewerAgent ✓
- *   AgentOrchestrator does NOT inject ConversationEngine ✓
+ * Uses the brain architecture exclusively:
+ * - TheConductor for real-time responses
+ * - TheAnalyst for background analysis (fire-and-forget)
+ * - TheStrategist for meta-cognitive review (every 5 turns)
+ * - BrainFlowGuard for safety rules
  *
  * [reportService] uses @Lazy as a safety guard against Spring init ordering issues.
  */
 @Service
 class ConversationEngine(
     private val redisMemoryService: RedisMemoryService,
-    private val interviewerAgent: InterviewerAgent,
     private val registry: WsSessionRegistry,
     private val conversationMessageRepository: ConversationMessageRepository,
     private val sessionQuestionRepository: SessionQuestionRepository,
+    private val sessionRepository: InterviewSessionRepository,
     private val questionService: QuestionService,
     private val objectMapper: ObjectMapper,
-    @Lazy private val agentOrchestrator: AgentOrchestrator,
     @Lazy private val reportService: ReportService,
-    private val smartOrchestrator: SmartOrchestrator,
-    private val stateContextBuilder: StateContextBuilder,
-    private val objectiveTracker: ObjectiveTracker,
-    private val flowGuard: FlowGuard,
-    private val candidateModelUpdater: CandidateModelUpdater,
-    // Brain system (Phase 1+2)
     private val brainService: BrainService,
     private val theConductor: TheConductor,
     private val theAnalyst: TheAnalyst,
@@ -99,107 +88,74 @@ class ConversationEngine(
      * Main entry point when the candidate sends a message.
      *
      * Flow:
-     * 1. Persist candidate message to transcript + DB
-     * 2. Transition → CandidateResponding
-     * 3. Stream AI response (InterviewerAgent)
-     * 4. Transition → AiAnalyzing
-     * 5. Launch background AgentOrchestrator.analyze() (fire-and-forget)
+     * 1. Load brain from Redis
+     * 2. Persist candidate message
+     * 3. Compute interview state from objectives
+     * 4. Check FlowGuard safety rules
+     * 5. TheConductor generates and streams response
+     * 6. Background: TheAnalyst + TheStrategist (fire-and-forget)
      */
     suspend fun handleCandidateMessage(sessionId: UUID, content: String) {
-        // ── Brain path (feature flag) ──
-        if (theConductor.useNewBrain) {
-            val brain = brainService.getBrainOrNull(sessionId)
-            if (brain != null) {
-                handleWithBrain(sessionId, content, brain)
-                return
-            }
-            log.warn("Brain missing for session {} — falling back to old system", sessionId)
-        }
-
-        // ── Legacy path (existing behavior, unchanged) ──
-        val memory = try {
-            redisMemoryService.getMemory(sessionId)
-        } catch (e: Exception) {
-            log.error("Session memory not found for {}: {}", sessionId, e.message)
+        val brain = brainService.getBrainOrNull(sessionId)
+        if (brain == null) {
+            log.error("Brain not found for session {}", sessionId)
             registry.sendMessage(sessionId, OutboundMessage.Error("SESSION_ERROR", "Session not found"))
             return
         }
 
-        // Persist candidate message
-        redisMemoryService.appendTranscriptTurn(sessionId, "CANDIDATE", content)
+        // Persist candidate message to DB + brain transcript
         persistCandidateMessage(sessionId, content)
+        brainService.appendTranscriptTurn(sessionId, "CANDIDATE", content)
 
-        // State: CANDIDATE_RESPONDING
+        // Also persist to old memory for report generation compatibility
+        try { redisMemoryService.appendTranscriptTurn(sessionId, "CANDIDATE", content) } catch (_: Exception) {}
+
         transition(sessionId, InterviewState.CandidateResponding)
 
-        // Compute objective state for this turn
-        val objectives = ObjectivesRegistry.forCategory(memory.category)
-        val stateCtx = try { stateContextBuilder.build(sessionId) } catch (_: Exception) { null }
-        val objState = computeObjectiveState(memory, objectives, stateCtx?.remainingMinutes ?: 45)
+        // Compute interview state from objectives
+        val remainingMinutes = calculateRemainingMinutes(sessionId)
+        val state = computeBrainInterviewState(brain, remainingMinutes)
 
-        // Stream AI response (returns the completed response text)
-        val aiResponse = interviewerAgent.streamResponse(sessionId, memory, content, objState)
-
-        // State: AI_ANALYZING
-        transition(sessionId, InterviewState.AiAnalyzing)
-
-        // ── Background tasks (fire-and-forget on per-session scope) ──
-        val scope = getSessionScope(sessionId)
-
-        // SmartOrchestrator + legacy orchestrator
-        scope.launch {
-            try {
-                if (stateCtx != null) {
-                    smartOrchestrator.orchestrate(sessionId, content, aiResponse, stateCtx)
-                }
-                agentOrchestrator.analyzeAndTransition(sessionId, content)
-            } catch (e: CancellationException) { throw e }
-            catch (e: Exception) { log.error("Background orchestration failed for {}: {}", sessionId, e.message) }
-        }
-
-        // ObjectiveTracker — marks objectives complete
-        scope.launch {
-            try { objectiveTracker.update(sessionId, content, aiResponse, memory) }
-            catch (e: CancellationException) { throw e }
-            catch (e: Exception) { log.warn("ObjectiveTracker failed for {}: {}", sessionId, e.message) }
-        }
-
-        // FlowGuard — sets pendingProbe if needed
-        scope.launch {
-            try {
-                val freshMemory = redisMemoryService.getMemory(sessionId)
-                val freshObjState = computeObjectiveState(freshMemory, objectives, stateCtx?.remainingMinutes ?: 45)
-                val probe = flowGuard.check(sessionId, freshMemory, freshObjState)
-                if (probe != null) {
-                    redisMemoryService.updateMemory(sessionId) { it.copy(pendingProbe = probe) }
-                }
-            } catch (e: CancellationException) { throw e }
-            catch (e: Exception) { log.warn("FlowGuard failed for {}: {}", sessionId, e.message) }
-        }
-
-        // CandidateModelUpdater — evolves mental model every 2 turns
-        scope.launch {
-            try {
-                val freshMemory = redisMemoryService.getMemory(sessionId)
-                candidateModelUpdater.update(sessionId, freshMemory)
-            } catch (e: CancellationException) { throw e }
-            catch (e: Exception) { log.warn("CandidateModelUpdater failed for {}: {}", sessionId, e.message) }
+        // FlowGuard safety check
+        brainFlowGuard.check(brain, state)?.let { guardAction ->
+            try { brainService.addAction(sessionId, guardAction) } catch (_: Exception) {}
         }
 
         // Increment turn count
+        try { brainService.incrementTurnCount(sessionId) } catch (_: Exception) {}
+
+        // Generate and stream AI response via TheConductor
+        val aiResponse = theConductor.respond(sessionId, content, brain, state)
+
+        transition(sessionId, InterviewState.AiAnalyzing)
+
+        // Background tasks (fire-and-forget on per-session scope)
+        val scope = getSessionScope(sessionId)
+
+        // TheAnalyst — updates full brain after every exchange
         scope.launch {
-            try { redisMemoryService.incrementTurnCount(sessionId) }
-            catch (e: CancellationException) { throw e }
-            catch (e: Exception) { log.warn("Turn count increment failed for {}: {}", sessionId, e.message) }
+            try {
+                val freshBrain = brainService.getBrainOrNull(sessionId) ?: return@launch
+                theAnalyst.analyze(sessionId, content, aiResponse, freshBrain)
+            } catch (e: CancellationException) { throw e }
+            catch (e: Exception) { log.warn("TheAnalyst failed for {}: {}", sessionId, e.message) }
+        }
+
+        // TheStrategist — meta-cognitive review every 5 turns
+        if ((brain.turnCount + 1) % 5 == 0) {
+            scope.launch {
+                try {
+                    val freshBrain = brainService.getBrainOrNull(sessionId) ?: return@launch
+                    theStrategist.review(sessionId, freshBrain)
+                } catch (e: CancellationException) { throw e }
+                catch (e: Exception) { log.warn("TheStrategist failed for {}: {}", sessionId, e.message) }
+            }
         }
     }
 
     /**
      * Called on first WebSocket connect (when memory state == INTERVIEW_STARTING).
-     *
-     * Flow:
-     * 1. Transition → QuestionPresented
-     * 2. Build and stream the opening interviewer message
+     * Initializes brain and sends opening greeting.
      */
     suspend fun startInterview(sessionId: UUID) {
         val memory = try {
@@ -210,50 +166,42 @@ class ConversationEngine(
             return
         }
 
-        // Start in SMALL_TALK stage — warm greeting, don't present the problem yet.
-        // The problem is presented when interviewStage transitions to PROBLEM_PRESENTED
-        // (triggered after the candidate's first response).
         transition(sessionId, InterviewState.QuestionPresented)
 
+        // Send personality-based opening message
         val openingMessage = when (memory.personality.uppercase()) {
-            "FAANG_SENIOR" ->
-                "Hey. Ready to get started? I'll share the problem."
-            "FRIENDLY_MENTOR", "FRIENDLY" ->
-                "Hey! How's it going? Excited to work through this with you today."
-            "STARTUP_ENGINEER", "STARTUP" ->
-                "Hey, welcome. Let's jump right in \u2014 I'll share a problem and we'll work through it together."
-            "ADAPTIVE" ->
-                "Hi! How are you doing today? Ready to get started?"
-            else ->
-                "Hey! How's it going? I'll be your interviewer today. Whenever you're ready, we can jump in."
+            "FAANG_SENIOR" -> "Hey. Ready to get started? I'll share the problem."
+            "FRIENDLY_MENTOR", "FRIENDLY" -> "Hey! How's it going? Excited to work through this with you today."
+            "STARTUP_ENGINEER", "STARTUP" -> "Hey, welcome. Let's jump right in \u2014 I'll share a problem and we'll work through it together."
+            "ADAPTIVE" -> "Hi! How are you doing today? Ready to get started?"
+            else -> "Hey! How's it going? I'll be your interviewer today. Whenever you're ready, we can jump in."
         }
 
         registry.sendMessage(sessionId, OutboundMessage.AiChunk(delta = openingMessage, done = false))
         registry.sendMessage(sessionId, OutboundMessage.AiChunk(delta = "", done = true))
 
-        // Initialize brain if feature flag is on
-        if (theConductor.useNewBrain) {
-            try {
-                val q = memory.currentQuestion
-                val question = InterviewQuestion(
-                    questionId = q?.id?.toString() ?: "",
-                    title = q?.title ?: "", description = q?.description ?: "",
-                    optimalApproach = q?.optimalApproach ?: "",
-                    difficulty = q?.difficulty ?: "MEDIUM", category = memory.category,
-                )
-                val goals = BrainObjectivesRegistry.forCategory(memory.category)
-                brainService.initBrain(
-                    sessionId = sessionId, userId = memory.userId,
-                    interviewType = memory.category, question = question, goals = goals,
-                    personality = memory.personality, targetCompany = memory.targetCompany,
-                    experienceLevel = memory.experienceLevel, programmingLanguage = memory.programmingLanguage,
-                )
-                log.info("Brain initialized for session {}", sessionId)
-            } catch (e: Exception) {
-                log.warn("Brain init failed for {}, will use old system: {}", sessionId, e.message)
-            }
+        // Initialize brain
+        try {
+            val q = memory.currentQuestion
+            val question = InterviewQuestion(
+                questionId = q?.id?.toString() ?: "",
+                title = q?.title ?: "", description = q?.description ?: "",
+                optimalApproach = q?.optimalApproach ?: "",
+                difficulty = q?.difficulty ?: "MEDIUM", category = memory.category,
+            )
+            val goals = BrainObjectivesRegistry.forCategory(memory.category)
+            brainService.initBrain(
+                sessionId = sessionId, userId = memory.userId,
+                interviewType = memory.category, question = question, goals = goals,
+                personality = memory.personality, targetCompany = memory.targetCompany,
+                experienceLevel = memory.experienceLevel, programmingLanguage = memory.programmingLanguage,
+            )
+            log.info("Brain initialized for session {}", sessionId)
+        } catch (e: Exception) {
+            log.error("Brain init failed for {}: {}", sessionId, e.message)
         }
 
+        // Persist opening to transcript
         redisMemoryService.appendTranscriptTurn(sessionId, "AI", openingMessage)
         try {
             withContext(Dispatchers.IO) {
@@ -265,12 +213,11 @@ class ConversationEngine(
             log.warn("Failed to persist AI opening message for session {}: {}", sessionId, e.message)
         }
 
-        log.info("Interview started (SMALL_TALK): sessionId={}", sessionId)
+        log.info("Interview started: sessionId={}", sessionId)
     }
 
     /**
-     * Forces the interview to end (e.g., timer expiry or explicit end).
-     * Transitions to [InterviewState.Evaluating] then fires report generation.
+     * Forces the interview to end. Transitions to Evaluating, fires report generation.
      */
     suspend fun forceEndInterview(sessionId: UUID) {
         transition(sessionId, InterviewState.Evaluating)
@@ -280,9 +227,8 @@ class ConversationEngine(
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                log.error("Report generation failed for force-ended session {}: {}", sessionId, e.message)
+                log.error("Report generation failed for session {}: {}", sessionId, e.message)
             } finally {
-                // Clean up brain if it exists
                 try { brainService.deleteBrain(sessionId) } catch (_: Exception) {}
                 cancelSessionScope(sessionId)
             }
@@ -309,24 +255,14 @@ class ConversationEngine(
 
     /**
      * Transitions to the next question in a multi-question interview.
-     * Called by AgentOrchestrator when Q1 evaluation is done and more questions remain.
-     *
-     * Flow:
-     * 1. Load next question from DB (by orderIndex)
-     * 2. Update Redis memory: new question, reset per-question state, bump questionIndex
-     * 3. Send QUESTION_TRANSITION WS event
-     * 4. Transition → QUESTION_PRESENTED
-     * 5. Stream the next question presentation message
      */
     suspend fun transitionToNextQuestion(sessionId: UUID) {
         val memory = redisMemoryService.getMemory(sessionId)
         val nextIndex = memory.currentQuestionIndex + 1
 
-        // Load session questions ordered by index
         val sessionQuestions = sessionQuestionRepository
             .findBySessionIdOrderByOrderIndex(sessionId)
-            .collectList()
-            .awaitSingle()
+            .collectList().awaitSingle()
 
         if (nextIndex >= sessionQuestions.size) {
             log.warn("No more questions for session {} (index={}), proceeding to evaluation", sessionId, nextIndex)
@@ -337,21 +273,15 @@ class ConversationEngine(
         val nextSq = sessionQuestions[nextIndex]
         val nextQuestion = questionService.getQuestionById(nextSq.questionId).toInternalDto(objectMapper)
 
-        // Update memory: new question, reset per-question fields
         transition(sessionId, InterviewState.QuestionTransition)
         redisMemoryService.updateMemory(sessionId) { mem ->
             mem.copy(
-                currentQuestion      = nextQuestion,
-                currentQuestionIndex = nextIndex,
-                currentCode          = null,
-                candidateAnalysis    = null,
-                hintsGiven           = 0,
-                followUpsAsked       = emptyList(),
-                interviewStage       = "PROBLEM_PRESENTED",  // Skip SMALL_TALK for subsequent questions
+                currentQuestion = nextQuestion, currentQuestionIndex = nextIndex,
+                currentCode = null, candidateAnalysis = null, hintsGiven = 0,
+                followUpsAsked = emptyList(), interviewStage = "PROBLEM_PRESENTED",
             )
         }
 
-        // Parse code templates if available
         val templates = nextQuestion.codeTemplates?.let { ct ->
             try {
                 @Suppress("UNCHECKED_CAST")
@@ -359,15 +289,11 @@ class ConversationEngine(
             } catch (_: Exception) { null }
         }
 
-        // Notify frontend of question transition
         registry.sendMessage(sessionId, OutboundMessage.QuestionTransition(
-            questionIndex       = nextIndex,
-            questionTitle       = nextQuestion.title,
-            questionDescription = nextQuestion.description,
-            codeTemplates       = templates,
+            questionIndex = nextIndex, questionTitle = nextQuestion.title,
+            questionDescription = nextQuestion.description, codeTemplates = templates,
         ))
 
-        // Present the next question
         transition(sessionId, InterviewState.QuestionPresented)
 
         val transitionMessage = "Good work on that problem. Let's move on to the next one:\n\n" +
@@ -377,7 +303,6 @@ class ConversationEngine(
         registry.sendMessage(sessionId, OutboundMessage.AiChunk(delta = transitionMessage, done = false))
         registry.sendMessage(sessionId, OutboundMessage.AiChunk(delta = "", done = true))
 
-        // Persist to transcript and DB
         redisMemoryService.appendTranscriptTurn(sessionId, "AI", transitionMessage)
         try {
             withContext(Dispatchers.IO) {
@@ -386,76 +311,37 @@ class ConversationEngine(
                 ).awaitSingle()
             }
         } catch (e: Exception) {
-            log.warn("Failed to persist Q{} transition message for session {}: {}", nextIndex + 1, sessionId, e.message)
+            log.warn("Failed to persist Q{} transition message for {}: {}", nextIndex + 1, sessionId, e.message)
         }
+
+        // Update brain for new question
+        try {
+            val q = InterviewQuestion(
+                questionId = nextQuestion.id?.toString() ?: "", title = nextQuestion.title,
+                description = nextQuestion.description, optimalApproach = nextQuestion.optimalApproach ?: "",
+                difficulty = nextQuestion.difficulty ?: "MEDIUM", category = memory.category,
+            )
+            brainService.updateBrain(sessionId) { b ->
+                b.copy(questionDetails = q, turnCount = 0,
+                    interviewGoals = BrainObjectivesRegistry.forCategory(memory.category))
+            }
+        } catch (_: Exception) {}
 
         log.info("Session {} transitioned to question {} of {}", sessionId, nextIndex + 1, memory.totalQuestions)
     }
 
-    // ── Brain path ─────────────────────────────────────────────────────────
-
-    private suspend fun handleWithBrain(
-        sessionId: UUID,
-        content: String,
-        brain: com.aiinterview.conversation.brain.InterviewerBrain,
-    ) {
-        // Persist candidate message (same as legacy)
-        persistCandidateMessage(sessionId, content)
-        brainService.appendTranscriptTurn(sessionId, "CANDIDATE", content)
-
-        transition(sessionId, InterviewState.CandidateResponding)
-
-        // Compute interview state
-        val remainingMinutes = try {
-            val stateCtx = stateContextBuilder.build(sessionId)
-            stateCtx.remainingMinutes
-        } catch (_: Exception) { 30 }
-
-        val state = computeBrainInterviewState(brain, remainingMinutes)
-
-        // FlowGuard check
-        brainFlowGuard.check(brain, state)?.let { guardAction ->
-            try { brainService.addAction(sessionId, guardAction) } catch (_: Exception) {}
-        }
-
-        // Increment turn count
-        try { brainService.incrementTurnCount(sessionId) } catch (_: Exception) {}
-
-        // Generate response via TheConductor
-        val aiResponse = theConductor.respond(sessionId, content, brain, state)
-
-        transition(sessionId, InterviewState.AiAnalyzing)
-
-        // Fire background tasks
-        val scope = getSessionScope(sessionId)
-
-        scope.launch {
-            try {
-                val freshBrain = brainService.getBrainOrNull(sessionId) ?: return@launch
-                theAnalyst.analyze(sessionId, content, aiResponse, freshBrain)
-            } catch (e: CancellationException) { throw e }
-            catch (e: Exception) { log.warn("TheAnalyst failed for {}: {}", sessionId, e.message) }
-        }
-
-        if ((brain.turnCount + 1) % 5 == 0) {
-            scope.launch {
-                try {
-                    val freshBrain = brainService.getBrainOrNull(sessionId) ?: return@launch
-                    theStrategist.review(sessionId, freshBrain)
-                } catch (e: CancellationException) { throw e }
-                catch (e: Exception) { log.warn("TheStrategist failed for {}: {}", sessionId, e.message) }
-            }
-        }
-
-        // Also run legacy orchestrator for state machine compatibility
-        scope.launch {
-            try { agentOrchestrator.analyzeAndTransition(sessionId, content) }
-            catch (e: CancellationException) { throw e }
-            catch (e: Exception) { log.warn("Legacy orchestrator failed for {}: {}", sessionId, e.message) }
-        }
-    }
-
     // ── Private helpers ───────────────────────────────────────────────────────
+
+    private suspend fun calculateRemainingMinutes(sessionId: UUID): Int = try {
+        val session = withContext(Dispatchers.IO) {
+            sessionRepository.findById(sessionId).awaitSingleOrNull()
+        }
+        val started = session?.startedAt?.toInstant()
+        if (started != null) {
+            val elapsed = Duration.between(started, Instant.now()).toMinutes()
+            (45 - elapsed).toInt().coerceAtLeast(0)
+        } else 30
+    } catch (_: Exception) { 30 }
 
     private suspend fun persistCandidateMessage(sessionId: UUID, content: String) {
         try {

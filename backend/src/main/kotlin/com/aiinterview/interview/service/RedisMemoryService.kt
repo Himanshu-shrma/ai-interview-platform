@@ -26,7 +26,6 @@ class SessionNotFoundException(sessionId: UUID) :
 class RedisMemoryService(
     private val redisTemplate: ReactiveStringRedisTemplate,
     private val objectMapper: ObjectMapper,
-    private val transcriptCompressor: TranscriptCompressor,
     @Value("\${interview.redis-ttl-hours:2}") private val ttlHours: Long,
     @Value("\${interview.transcript-max-turns:6}") private val maxTranscriptTurns: Int,
 ) {
@@ -102,8 +101,7 @@ class RedisMemoryService(
      * Appends a new transcript turn and triggers compression when the rolling
      * transcript exceeds [maxTranscriptTurns].
      *
-     * Compression calls [TranscriptCompressor.compress] (suspend) outside the
-     * non-suspend updateMemory lambda, then saves the result atomically.
+     * Compression uses simple extractive summary when rolling transcript exceeds max turns.
      */
     suspend fun appendTranscriptTurn(
         sessionId: UUID,
@@ -116,7 +114,7 @@ class RedisMemoryService(
 
         val (transcript, earlierContext) = if (updated.size > maxTranscriptTurns) {
             val oldest     = updated.take(2)
-            val compressed = transcriptCompressor.compress(oldest)   // suspend — OK here
+            val compressed = oldest.joinToString(" | ") { "${it.role}: ${it.content.take(80)}" }
             val newContext = if (memory.earlierContext.isBlank()) compressed
                             else "$compressed | ${memory.earlierContext}"
             log.debug("Compressed {} turns for session {}", oldest.size, sessionId)

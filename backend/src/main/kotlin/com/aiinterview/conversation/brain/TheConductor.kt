@@ -18,7 +18,6 @@ import kotlinx.coroutines.reactor.awaitSingleOrNull
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import org.slf4j.LoggerFactory
-import org.springframework.beans.factory.annotation.Value
 import org.springframework.stereotype.Component
 import java.time.Duration
 import java.time.Instant
@@ -29,9 +28,9 @@ private const val MAX_TOKENS_FALLBACK = 200
 
 /**
  * The main response generator for the new brain system.
- * Replaces InterviewerAgent when feature flag is enabled.
+ * Main response generator using brain architecture.
  * Uses NaturalPromptBuilder to build brain-driven prompts.
- * Preserves identical streaming behavior to InterviewerAgent.
+ * Streams responses via LlmProviderRegistry.
  */
 @Component
 class TheConductor(
@@ -42,7 +41,6 @@ class TheConductor(
     private val registry: WsSessionRegistry,
     private val conversationMessageRepository: ConversationMessageRepository,
     private val sessionRepository: InterviewSessionRepository,
-    @Value("\${interview.use-new-brain:false}") val useNewBrain: Boolean,
 ) {
     private val log = LoggerFactory.getLogger(TheConductor::class.java)
 
