@@ -87,6 +87,7 @@ class CodeExecutionService(
         language: String,
     ) {
         val languageId = resolveLanguageId(sessionId, language) ?: return
+        log.info("Submit: sessionQuestionId={} session={} language={}", sessionQuestionId, sessionId, language)
 
         // Resolve question for test cases
         val sessionQuestion = withContext(Dispatchers.IO) {
@@ -102,6 +103,7 @@ class CodeExecutionService(
 
         val testCasesJson = question?.testCases
         val testCases     = parseTestCases(testCasesJson)
+        log.info("Submit: question='{}' testCases={} session={}", question?.title, testCases.size, sessionId)
 
         val memory = try { redisMemoryService.getMemory(sessionId) } catch (e: Exception) {
             registry.sendMessage(sessionId, OutboundMessage.Error("SESSION_ERROR", "Session not found"))

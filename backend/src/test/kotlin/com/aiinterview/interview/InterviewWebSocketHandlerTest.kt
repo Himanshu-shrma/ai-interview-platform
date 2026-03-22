@@ -47,7 +47,9 @@ class InterviewWebSocketHandlerTest {
     private val conversationMessageRepo     = mockk<ConversationMessageRepository>(relaxed = true)
     private val interviewSessionRepo        = mockk<InterviewSessionRepository>(relaxed = true)
     private val evaluationReportRepo        = mockk<EvaluationReportRepository>(relaxed = true)
-    private val handler                     = InterviewWebSocketHandler(registry, memoryService, conversationEngine, hintGenerator, codeExecutionService, objectMapper, conversationMessageRepo, interviewSessionRepo, evaluationReportRepo)
+    private val sessionQuestionRepo         = mockk<com.aiinterview.interview.repository.SessionQuestionRepository>(relaxed = true)
+    private val questionRepo                = mockk<com.aiinterview.interview.repository.QuestionRepository>(relaxed = true)
+    private val handler                     = InterviewWebSocketHandler(registry, memoryService, conversationEngine, hintGenerator, codeExecutionService, objectMapper, conversationMessageRepo, interviewSessionRepo, evaluationReportRepo, sessionQuestionRepo, questionRepo)
 
     private val sessionId = UUID.randomUUID()
     private val userId    = UUID.randomUUID()

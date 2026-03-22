@@ -31,6 +31,7 @@ export interface InterviewConfig {
 
 export interface CandidateQuestion {
   id: string
+  sessionQuestionId?: string
   title: string
   description: string
   category: string

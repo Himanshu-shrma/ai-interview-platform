@@ -6,7 +6,13 @@ import com.aiinterview.shared.ai.LlmRequest
 import com.aiinterview.shared.ai.ModelConfig
 import com.aiinterview.shared.ai.ResponseFormat
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties
+import com.fasterxml.jackson.core.JsonParser
+import com.fasterxml.jackson.core.JsonToken
+import com.fasterxml.jackson.databind.DeserializationContext
+import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
+import com.fasterxml.jackson.databind.annotation.JsonDeserialize
+import com.fasterxml.jackson.databind.deser.std.StdDeserializer
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Component
 import java.util.UUID
@@ -439,8 +445,24 @@ data class CandidateProfileUpdateDto(
 data class NewHypothesisDto(val claim: String = "", val confidence: Float = 0.6f, val evidence: List<String> = emptyList(), val testStrategy: String = "", val priority: Int = 3, val bloomsLevel: Int = 3)
 @JsonIgnoreProperties(ignoreUnknown = true)
 data class HypothesisUpdateDto(val id: String = "", val newEvidence: String = "", val newStatus: String? = null)
+class NewClaimDtoDeserializer : StdDeserializer<NewClaimDto>(NewClaimDto::class.java) {
+    override fun deserialize(p: JsonParser, ctxt: DeserializationContext): NewClaimDto = when (p.currentToken) {
+        JsonToken.VALUE_STRING -> NewClaimDto(claim = p.text, topic = "general", correctness = "unverified")
+        JsonToken.START_OBJECT -> {
+            val node: JsonNode = p.codec.readTree(p)
+            NewClaimDto(
+                claim = node.get("claim")?.asText() ?: "",
+                topic = node.get("topic")?.asText() ?: "general",
+                correctness = node.get("correctness")?.asText() ?: "unverified",
+            )
+        }
+        else -> NewClaimDto()
+    }
+}
+
+@JsonDeserialize(using = NewClaimDtoDeserializer::class)
 @JsonIgnoreProperties(ignoreUnknown = true)
-data class NewClaimDto(val claim: String = "", val topic: String = "", val correctness: String = "unverified")
+data class NewClaimDto(val claim: String = "", val topic: String = "general", val correctness: String = "unverified")
 @JsonIgnoreProperties(ignoreUnknown = true)
 data class ContradictionDto(val claim1: String = "", val claim2: String = "", val description: String = "")
 @JsonIgnoreProperties(ignoreUnknown = true)

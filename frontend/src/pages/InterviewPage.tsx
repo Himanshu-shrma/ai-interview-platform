@@ -330,7 +330,8 @@ export default function InterviewPage() {
   function handleCodeSubmit(code: string) {
     setIsCodeRunning(true)
     setCodeResult(null)
-    const sqId = session?.questions?.[0]?.id
+    const currentQ = session?.questions?.[currentQuestionIndex]
+    const sqId = currentQ?.sessionQuestionId ?? currentQ?.id
     send({
       type: 'CODE_SUBMIT',
       code,

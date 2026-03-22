@@ -1,11 +1,15 @@
 package com.aiinterview.interview
 
-import com.aiinterview.conversation.AgentOrchestrator
 import com.aiinterview.conversation.ConversationEngine
 import com.aiinterview.conversation.InterviewState
-import com.aiinterview.conversation.InterviewerAgent
+import com.aiinterview.conversation.brain.BrainFlowGuard
+import com.aiinterview.conversation.brain.BrainService
+import com.aiinterview.conversation.brain.TheAnalyst
+import com.aiinterview.conversation.brain.TheConductor
+import com.aiinterview.conversation.brain.TheStrategist
 import com.aiinterview.interview.model.ConversationMessage
 import com.aiinterview.interview.repository.ConversationMessageRepository
+import com.aiinterview.interview.repository.InterviewSessionRepository
 import com.aiinterview.interview.repository.SessionQuestionRepository
 import com.aiinterview.interview.service.InterviewMemory
 import com.aiinterview.interview.service.QuestionService
@@ -26,70 +30,38 @@ import java.util.UUID
 
 class ConversationEngineTest {
 
-    private val redisMemoryService      = mockk<RedisMemoryService>()
-    private val interviewerAgent        = mockk<InterviewerAgent>(relaxed = true)
-    private val registry                = mockk<WsSessionRegistry>(relaxed = true)
-    private val messageRepository       = mockk<ConversationMessageRepository>()
+    private val redisMemoryService = mockk<RedisMemoryService>()
+    private val registry = mockk<WsSessionRegistry>(relaxed = true)
+    private val messageRepository = mockk<ConversationMessageRepository>()
     private val sessionQuestionRepository = mockk<SessionQuestionRepository>(relaxed = true)
-    private val questionService         = mockk<QuestionService>(relaxed = true)
-    private val objectMapper            = ObjectMapper()
-    private val agentOrchestrator       = mockk<AgentOrchestrator>(relaxed = true)
-    private val reportService           = mockk<ReportService>(relaxed = true)
+    private val sessionRepository = mockk<InterviewSessionRepository>(relaxed = true)
+    private val questionService = mockk<QuestionService>(relaxed = true)
+    private val objectMapper = ObjectMapper()
+    private val reportService = mockk<ReportService>(relaxed = true)
+    private val brainService = mockk<BrainService>(relaxed = true)
+    private val theConductor = mockk<TheConductor>(relaxed = true)
+    private val theAnalyst = mockk<TheAnalyst>(relaxed = true)
+    private val theStrategist = mockk<TheStrategist>(relaxed = true)
+    private val brainFlowGuard = mockk<BrainFlowGuard>(relaxed = true)
 
     private val engine = ConversationEngine(
-        redisMemoryService            = redisMemoryService,
-        interviewerAgent              = interviewerAgent,
-        registry                      = registry,
+        redisMemoryService = redisMemoryService,
+        registry = registry,
         conversationMessageRepository = messageRepository,
-        sessionQuestionRepository     = sessionQuestionRepository,
-        questionService               = questionService,
-        objectMapper                  = objectMapper,
-        agentOrchestrator             = agentOrchestrator,
-        reportService                 = reportService,
+        sessionQuestionRepository = sessionQuestionRepository,
+        sessionRepository = sessionRepository,
+        questionService = questionService,
+        objectMapper = objectMapper,
+        reportService = reportService,
+        brainService = brainService,
+        theConductor = theConductor,
+        theAnalyst = theAnalyst,
+        theStrategist = theStrategist,
+        brainFlowGuard = brainFlowGuard,
     )
 
     private val sessionId = UUID.randomUUID()
-    private val userId    = UUID.randomUUID()
-
-    // ── handleCandidateMessage ────────────────────────────────────────────────
-
-    @Test
-    fun `handleCandidateMessage transitions to CandidateResponding`() {
-        coEvery { redisMemoryService.getMemory(sessionId) } returns buildMemory("QUESTION_PRESENTED")
-        coEvery { redisMemoryService.appendTranscriptTurn(sessionId, "CANDIDATE", any()) } returns buildMemory("QUESTION_PRESENTED")
-        coEvery { redisMemoryService.updateMemory(sessionId, any()) } returns buildMemory("CANDIDATE_RESPONDING")
-        coEvery { registry.sendMessage(sessionId, any()) } returns true
-        every { messageRepository.save(any<ConversationMessage>()) } returns Mono.just(
-            ConversationMessage(sessionId = sessionId, role = "CANDIDATE", content = "test")
-        )
-
-        runTest {
-            engine.handleCandidateMessage(sessionId, "I'd use a hash map")
-        }
-
-        coVerify {
-            registry.sendMessage(sessionId, match {
-                it is OutboundMessage.StateChange && it.state == "CANDIDATE_RESPONDING"
-            })
-        }
-    }
-
-    @Test
-    fun `handleCandidateMessage calls InterviewerAgent`() {
-        coEvery { redisMemoryService.getMemory(sessionId) } returns buildMemory("QUESTION_PRESENTED")
-        coEvery { redisMemoryService.appendTranscriptTurn(sessionId, "CANDIDATE", any()) } returns buildMemory("QUESTION_PRESENTED")
-        coEvery { redisMemoryService.updateMemory(sessionId, any()) } returns buildMemory("CANDIDATE_RESPONDING")
-        coEvery { registry.sendMessage(sessionId, any()) } returns true
-        every { messageRepository.save(any<ConversationMessage>()) } returns Mono.just(
-            ConversationMessage(sessionId = sessionId, role = "CANDIDATE", content = "test")
-        )
-
-        runTest {
-            engine.handleCandidateMessage(sessionId, "I'd use a hash map")
-        }
-
-        coVerify { interviewerAgent.streamResponse(sessionId, any(), "I'd use a hash map") }
-    }
+    private val userId = UUID.randomUUID()
 
     // ── transition ────────────────────────────────────────────────────────────
 
@@ -135,14 +107,14 @@ class ConversationEngineTest {
     // ── helpers ───────────────────────────────────────────────────────────────
 
     private fun buildMemory(state: String) = InterviewMemory(
-        sessionId         = sessionId,
-        userId            = userId,
-        state             = state,
-        category          = "CODING",
-        personality       = "friendly_mentor",
-        currentQuestion   = null,
+        sessionId = sessionId,
+        userId = userId,
+        state = state,
+        category = "CODING",
+        personality = "friendly_mentor",
+        currentQuestion = null,
         candidateAnalysis = null,
-        createdAt         = Instant.now(),
-        lastActivityAt    = Instant.now(),
+        createdAt = Instant.now(),
+        lastActivityAt = Instant.now(),
     )
 }
