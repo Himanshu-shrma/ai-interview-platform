@@ -448,6 +448,7 @@ export default function InterviewPage() {
             onSendMessage={handleSendMessage}
             onRequestHint={handleRequestHint}
             disabled={isEnded}
+            showHints={session?.category === 'CODING' || session?.category === 'DSA'}
           />
         </div>
 

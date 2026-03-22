@@ -173,25 +173,29 @@ class ConversationEngine(
         val questionTitle = q?.title ?: "Interview Question"
         val questionDesc = q?.description ?: ""
 
+        val isCodingType = memory.category.uppercase() in setOf("CODING", "DSA")
+        val isBehavioral = memory.category.uppercase() == "BEHAVIORAL"
+
         val greeting = when (memory.personality.uppercase()) {
-            "FAANG_SENIOR" -> "Hey. Let's get right to it."
-            "FRIENDLY_MENTOR", "FRIENDLY" -> "Hey! Great to meet you. Let's dive in."
-            "STARTUP_ENGINEER", "STARTUP" -> "Hey, welcome. Let's jump right in."
-            "ADAPTIVE" -> "Hi! Ready to get started? Here's your problem."
-            else -> "Hey! I'll be your interviewer today. Here's what we'll work on."
+            "FAANG_SENIOR" -> "Hey. Let's get started."
+            "FRIENDLY_MENTOR", "FRIENDLY" -> "Hey! Great to meet you."
+            "STARTUP_ENGINEER", "STARTUP" -> "Hey, welcome."
+            "ADAPTIVE" -> "Hi! Good to meet you."
+            else -> "Hey! I'll be your interviewer today."
         }
 
-        val openingMessage = if (questionDesc.isNotBlank()) {
-            "$greeting\n\n**$questionTitle**\n\n$questionDesc\n\nTake a moment to read through it."
-        } else {
-            "$greeting Whenever you're ready, we can begin."
+        val openingMessage = when {
+            // BEHAVIORAL: warm greeting only — question comes naturally via TheConductor
+            isBehavioral -> "$greeting Tell me a bit about what you've been working on lately."
+            // CODING/DSA/SYSTEM_DESIGN: greeting + problem statement
+            questionDesc.isNotBlank() -> "$greeting\n\n**$questionTitle**\n\n$questionDesc\n\nTake a moment to read through it."
+            else -> "$greeting Whenever you're ready, we can begin."
         }
 
         registry.sendMessage(sessionId, OutboundMessage.AiChunk(delta = openingMessage, done = false))
         registry.sendMessage(sessionId, OutboundMessage.AiChunk(delta = "", done = true))
 
-        // Show code editor for CODING/DSA types
-        val isCodingType = memory.category.uppercase() in setOf("CODING", "DSA")
+        // Show code editor for CODING/DSA types only
         if (isCodingType) {
             registry.sendMessage(sessionId, OutboundMessage.StateChange(state = "CODING_CHALLENGE"))
         }
@@ -216,8 +220,9 @@ class ConversationEngine(
             if (question.title.isBlank()) log.error("CRITICAL: Question title is blank for session {}", sessionId)
             if (question.description.isBlank()) log.error("CRITICAL: Question description is blank for session {}", sessionId)
 
-            // Mark problem_shared complete since we presented it in the opening
-            if (questionDesc.isNotBlank()) {
+            // Mark problem_shared complete for non-behavioral (presented in opening)
+            // Behavioral: problem_shared is marked later when AI naturally asks the question
+            if (questionDesc.isNotBlank() && !isBehavioral) {
                 brainService.markGoalComplete(sessionId, "problem_shared")
                 log.info("problem_shared marked complete for session {}", sessionId)
             }

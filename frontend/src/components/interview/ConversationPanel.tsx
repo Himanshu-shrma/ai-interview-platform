@@ -18,6 +18,7 @@ interface ConversationPanelProps {
   onSendMessage: (content: string) => void
   onRequestHint: () => void
   disabled: boolean
+  showHints?: boolean
 }
 
 export function ConversationPanel({
@@ -27,6 +28,7 @@ export function ConversationPanel({
   onSendMessage,
   onRequestHint,
   disabled,
+  showHints = true,
 }: ConversationPanelProps) {
   const [input, setInput] = useState('')
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -112,35 +114,37 @@ export function ConversationPanel({
         </div>
 
         <div className="flex items-center justify-between">
-          <TooltipProvider>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={onRequestHint}
-                  disabled={hintsGiven >= 3 || disabled}
-                  className="text-xs"
-                >
-                  Request Hint
-                  <span className="ml-1.5 flex items-center gap-0.5">
-                    {hintDots.map((used, i) => (
-                      <span
-                        key={i}
-                        className={cn(
-                          'inline-block h-1.5 w-1.5 rounded-full',
-                          used ? 'bg-yellow-500' : 'bg-muted-foreground/30'
-                        )}
-                      />
-                    ))}
-                  </span>
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>
-                <p>Hints deduct from your problem solving score</p>
-              </TooltipContent>
-            </Tooltip>
-          </TooltipProvider>
+          {showHints ? (
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={onRequestHint}
+                    disabled={hintsGiven >= 3 || disabled}
+                    className="text-xs"
+                  >
+                    Request Hint
+                    <span className="ml-1.5 flex items-center gap-0.5">
+                      {hintDots.map((used, i) => (
+                        <span
+                          key={i}
+                          className={cn(
+                            'inline-block h-1.5 w-1.5 rounded-full',
+                            used ? 'bg-yellow-500' : 'bg-muted-foreground/30'
+                          )}
+                        />
+                      ))}
+                    </span>
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p>Hints deduct from your problem solving score</p>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          ) : <span />}
           <span className="text-xs text-muted-foreground">
             Shift+Enter for new line
           </span>
