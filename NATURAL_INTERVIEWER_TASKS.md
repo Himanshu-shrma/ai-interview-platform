@@ -29,12 +29,12 @@ git branch --show-current
 
 | Phase | Tasks | Done | Status |
 |-------|-------|------|--------|
-| 1 — Foundation Brain | 8 | 5 | In progress |
+| 1 — Foundation Brain | 8 | 8 | COMPLETE |
 | 2 — Natural Intelligence | 10 | 0 | Not started |
 | 3 — Scientific Validity | 12 | 0 | Not started |
 | 4 — Advanced Cognition | 8 | 0 | Not started |
 | 5 — Deep Research Fixes | 10 | 0 | Not started |
-| **TOTAL** | **48** | **5** | **10%** |
+| **TOTAL** | **48** | **8** | **17%** |
 
 Minimum for merge to master: Phase 1 + Phase 2 complete.
 
@@ -107,7 +107,7 @@ Exactly 4 rules unchanged. But now returns `IntendedAction` with `source = Actio
 
 ---
 
-### TASK-006 [N] XL — TheAnalyst (Single Background Agent)
+### TASK-006 [D] XL — TheAnalyst (Single Background Agent)
 **Requires:** TASK-001, TASK-002, TASK-003, TASK-004
 **Replaces:** SmartOrchestrator + ReasoningAnalyzer + FollowUpGenerator + AgentOrchestrator + StageReflectionAgent + CandidateModelUpdater + ObjectiveTracker (all 7 → 1)
 **File:** `conversation/brain/TheAnalyst.kt`
@@ -118,7 +118,7 @@ JSON output: candidateProfileUpdate (12 fields), newHypothesis, hypothesisUpdate
 
 ---
 
-### TASK-007 [N] L — TheStrategist (Meta-Cognitive Reviewer)
+### TASK-007 [D] L — TheStrategist (Meta-Cognitive Reviewer)
 **Requires:** TASK-001, TASK-002, TASK-006
 **File:** `conversation/brain/TheStrategist.kt`
 
@@ -126,7 +126,7 @@ Runs every 5 turns (`turnCount % 5 == 0`). Reviews full InterviewerBrain. Update
 
 ---
 
-### TASK-008 [N] XL — TheConductor + NaturalPromptBuilder
+### TASK-008 [D] XL — TheConductor + NaturalPromptBuilder
 **Requires:** TASK-001 through TASK-007
 **Replaces:** InterviewerAgent + PromptBuilder
 **Files:** `conversation/brain/TheConductor.kt`, `conversation/brain/NaturalPromptBuilder.kt`

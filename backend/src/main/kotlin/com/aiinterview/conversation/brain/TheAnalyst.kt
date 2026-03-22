@@ -1,0 +1,318 @@
+package com.aiinterview.conversation.brain
+
+import com.aiinterview.conversation.knowledge.KnowledgeAdjacencyMap
+import com.aiinterview.shared.ai.LlmProviderRegistry
+import com.aiinterview.shared.ai.LlmRequest
+import com.aiinterview.shared.ai.ModelConfig
+import com.aiinterview.shared.ai.ResponseFormat
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties
+import com.fasterxml.jackson.databind.ObjectMapper
+import org.slf4j.LoggerFactory
+import org.springframework.stereotype.Component
+import java.util.UUID
+
+/**
+ * Single background agent replacing 7 existing agents:
+ * SmartOrchestrator, ReasoningAnalyzer, FollowUpGenerator,
+ * AgentOrchestrator, StageReflectionAgent, CandidateModelUpdater, ObjectiveTracker.
+ *
+ * ONE LLM call (backgroundModel = gpt-4o-mini) per exchange.
+ * Runs fire-and-forget. NEVER throws — always fails silently.
+ */
+@Component
+class TheAnalyst(
+    private val brainService: BrainService,
+    private val llm: LlmProviderRegistry,
+    private val modelConfig: ModelConfig,
+    private val objectMapper: ObjectMapper,
+) {
+    private val log = LoggerFactory.getLogger(TheAnalyst::class.java)
+
+    suspend fun analyze(
+        sessionId: UUID,
+        candidateMessage: String,
+        aiResponse: String,
+        brain: InterviewerBrain,
+    ) {
+        try {
+            val systemPrompt = buildAnalystPrompt(brain)
+            val userMessage = buildExchangeContext(candidateMessage, aiResponse, brain)
+
+            val response = llm.complete(
+                LlmRequest.build(
+                    systemPrompt = systemPrompt,
+                    userMessage = userMessage,
+                    model = modelConfig.backgroundModel,
+                    maxTokens = 600,
+                    responseFormat = ResponseFormat.JSON,
+                ),
+            )
+
+            val cleaned = response.content.trim()
+                .removePrefix("```json").removePrefix("```")
+                .removeSuffix("```").trim()
+
+            val decision = parseAnalystResponse(cleaned)
+            applyUpdates(sessionId, decision, brain)
+        } catch (e: Exception) {
+            log.warn("TheAnalyst failed silently for session={}: {}", sessionId, e.message)
+        }
+    }
+
+    private fun buildAnalystPrompt(brain: InterviewerBrain): String {
+        val openHypotheses = brain.hypothesisRegistry.hypotheses
+            .filter { it.status == HypothesisStatus.OPEN }.take(3)
+            .joinToString("\n") { "- [${it.id}] ${it.claim} (conf: ${it.confidence})" }
+            .ifBlank { "none" }
+
+        val recentClaims = brain.claimRegistry.claims.takeLast(5)
+            .joinToString("\n") { "- Turn ${it.turn}: ${it.claim}" }
+            .ifBlank { "none" }
+
+        val completedGoals = brain.interviewGoals.completed.joinToString(", ").ifBlank { "none" }
+        val remainingGoals = brain.interviewGoals.remainingRequired().take(3).map { it.id }.joinToString(", ").ifBlank { "none" }
+        val thoughtSnippet = brain.thoughtThread.thread.takeLast(200).ifBlank { "not started" }
+
+        return """
+You are the interview analyst. After each exchange, update the interviewer's mental model.
+You do NOT generate responses to the candidate.
+
+BRAIN STATE:
+Type: ${brain.interviewType} | Turn: ${brain.turnCount}
+Signal: ${brain.candidateProfile.overallSignal} | Style: ${brain.candidateProfile.thinkingStyle}
+State: ${brain.candidateProfile.currentState} | Anxiety: ${brain.candidateProfile.anxietyLevel}
+
+OPEN HYPOTHESES:
+$openHypotheses
+
+RECENT CLAIMS:
+$recentClaims
+
+GOALS COMPLETED: $completedGoals
+GOALS REMAINING: $remainingGoals
+
+THOUGHT THREAD: $thoughtSnippet
+
+Return ONLY valid JSON. No markdown. No other text.
+{
+  "candidateProfileUpdate": {
+    "thinkingStyle": "bottom-up|top-down|intuitive|methodical|null",
+    "overallSignal": "strong|solid|average|struggling|null",
+    "currentState": "confident|nervous|stuck|flowing|frustrated|null",
+    "trajectory": "improving|declining|stable|null",
+    "anxietyLevel": null,
+    "flowState": null,
+    "psychologicalSafety": null,
+    "abstractionLevel": null,
+    "selfRepairDetected": false,
+    "cognitiveLoadSignal": "nominal|elevated|overloaded|null",
+    "newAvoidancePattern": null,
+    "dismissalLanguage": false
+  },
+  "newHypothesis": null,
+  "hypothesisUpdates": [],
+  "newClaims": [],
+  "contradictionFound": null,
+  "goalsCompleted": [],
+  "thoughtThreadAppend": "",
+  "nextAction": null,
+  "exchangeScore": null,
+  "bloomsLevelUpdate": null,
+  "adjacentTopicsToProbe": []
+}
+
+RULES:
+- candidateProfileUpdate: null = no change. Be conservative.
+- newHypothesis: only if genuinely new insight. testStrategy must be an OPEN question.
+- hypothesisUpdates: newStatus "confirmed"|"refuted"|null.
+- newClaims: ONLY specific falsifiable technical claims. NOT "it should work".
+- contradictionFound: only if new claim contradicts a PREVIOUS claim above.
+- goalsCompleted: only if CLEARLY demonstrated this exchange. Be conservative.
+- thoughtThreadAppend: 1-2 sentences. Must reference THIS exchange. Must be forward-looking.
+- nextAction: type=TEST_HYPOTHESIS|SURFACE_CONTRADICTION|ADVANCE_GOAL|PROBE_DEPTH|REDIRECT|EMOTIONAL_ADJUST|REDUCE_LOAD|PRODUCTIVE_UNKNOWN|MENTAL_SIMULATION
+- exchangeScore: dimension=problem_solving|algorithm|code_quality|communication|efficiency|testing. Score 0.0-10.0.
+- bloomsLevelUpdate: {"topic": level} where level 1-6.
+- adjacentTopicsToProbe: topic IDs candidate just demonstrated.
+        """.trimIndent()
+    }
+
+    private fun buildExchangeContext(candidateMessage: String, aiResponse: String, brain: InterviewerBrain): String {
+        val isCodingType = brain.interviewType.uppercase() in setOf("CODING", "DSA")
+        return buildString {
+            appendLine("EXCHANGE:")
+            appendLine("Candidate: \"${candidateMessage.take(500)}\"")
+            appendLine("AI: \"${aiResponse.take(300)}\"")
+            if (isCodingType) {
+                val hasCode = !brain.currentCode.isNullOrBlank() && (brain.currentCode?.trim()?.length ?: 0) > 50
+                appendLine("Has meaningful code: $hasCode")
+            }
+            appendLine("Turn: ${brain.turnCount}")
+        }
+    }
+
+    private fun parseAnalystResponse(json: String): AnalystDecision = try {
+        objectMapper.readValue(json, AnalystDecision::class.java)
+    } catch (e: Exception) {
+        log.warn("Failed to parse analyst response: {}", e.message)
+        AnalystDecision()
+    }
+
+    private suspend fun applyUpdates(sessionId: UUID, decision: AnalystDecision, brain: InterviewerBrain) {
+        // 1. Candidate profile
+        decision.candidateProfileUpdate?.let { u ->
+            brainService.updateCandidateProfile(sessionId) { p ->
+                p.copy(
+                    thinkingStyle = u.thinkingStyle?.let { safeEnum<ThinkingStyle>(it) } ?: p.thinkingStyle,
+                    overallSignal = u.overallSignal?.let { safeEnum<CandidateSignal>(it) } ?: p.overallSignal,
+                    currentState = u.currentState?.let { safeEnum<EmotionalState>(it) } ?: p.currentState,
+                    trajectory = u.trajectory?.let { safeEnum<PerformanceTrajectory>(it) } ?: p.trajectory,
+                    anxietyLevel = u.anxietyLevel ?: p.anxietyLevel,
+                    flowState = u.flowState ?: p.flowState,
+                    psychologicalSafety = u.psychologicalSafety ?: p.psychologicalSafety,
+                    abstractionLevel = u.abstractionLevel ?: p.abstractionLevel,
+                    selfRepairCount = if (u.selfRepairDetected == true) p.selfRepairCount + 1 else p.selfRepairCount,
+                    cognitiveLoadSignal = u.cognitiveLoadSignal?.let { safeEnum<CognitiveLoad>(it) } ?: p.cognitiveLoadSignal,
+                    avoidancePatterns = u.newAvoidancePattern?.let { p.avoidancePatterns + it } ?: p.avoidancePatterns,
+                    dataPoints = p.dataPoints + 1,
+                )
+            }
+        }
+
+        // 2. New hypothesis
+        decision.newHypothesis?.let { h ->
+            brainService.addHypothesis(sessionId, Hypothesis(
+                id = "h_${brain.turnCount}_${brain.hypothesisRegistry.hypotheses.size}",
+                claim = h.claim, confidence = h.confidence,
+                supportingEvidence = h.evidence, testStrategy = h.testStrategy,
+                priority = h.priority, formedAtTurn = brain.turnCount,
+                bloomsLevel = h.bloomsLevel, status = HypothesisStatus.OPEN,
+            ))
+        }
+
+        // 3. Hypothesis updates
+        decision.hypothesisUpdates.forEach { u ->
+            u.newStatus?.let { status ->
+                val hs = when (status.lowercase()) {
+                    "confirmed" -> HypothesisStatus.CONFIRMED
+                    "refuted" -> HypothesisStatus.REFUTED
+                    else -> null
+                }
+                hs?.let { brainService.updateHypothesis(sessionId, u.id, it, u.newEvidence) }
+            }
+        }
+
+        // 4. New claims
+        decision.newClaims.forEach { c ->
+            brainService.addClaim(sessionId, Claim(
+                id = "c_${brain.turnCount}_${brain.claimRegistry.claims.size}",
+                turn = brain.turnCount, claim = c.claim, topic = c.topic,
+                correctness = when (c.correctness.lowercase()) {
+                    "correct" -> ClaimCorrectness.CORRECT
+                    "incorrect" -> ClaimCorrectness.INCORRECT
+                    "partially_correct" -> ClaimCorrectness.PARTIALLY_CORRECT
+                    else -> ClaimCorrectness.UNVERIFIED
+                },
+            ))
+        }
+
+        // 5. Contradiction
+        decision.contradictionFound?.let { cf ->
+            val c1 = brain.claimRegistry.claims.firstOrNull { it.claim == cf.claim1 }
+            val c2 = brain.claimRegistry.claims.firstOrNull { it.claim == cf.claim2 }
+            if (c1 != null && c2 != null) {
+                brainService.addContradiction(sessionId, Contradiction(
+                    claim1Id = c1.id, claim2Id = c2.id,
+                    claim1Text = cf.claim1, claim2Text = cf.claim2,
+                    contradictionDescription = cf.description,
+                ))
+            }
+        }
+
+        // 6. Goals completed
+        if (decision.goalsCompleted.isNotEmpty()) brainService.markGoalsComplete(sessionId, decision.goalsCompleted)
+
+        // 7. Thought thread
+        if (decision.thoughtThreadAppend.isNotBlank()) brainService.appendThought(sessionId, decision.thoughtThreadAppend)
+
+        // 8. Next action
+        decision.nextAction?.let { a ->
+            val actionType = try { ActionType.valueOf(a.type.uppercase().replace("-", "_")) } catch (_: Exception) { ActionType.ADVANCE_GOAL }
+            brainService.addAction(sessionId, IntendedAction(
+                id = "a_${brain.turnCount}", type = actionType, description = a.description,
+                priority = a.priority, expiresAfterTurn = brain.turnCount + a.expiresInTurns,
+                source = ActionSource.ANALYST, bloomsLevel = a.bloomsLevel,
+            ))
+        }
+
+        // 9. Exchange score
+        decision.exchangeScore?.let { es ->
+            brainService.addExchangeScore(sessionId, ExchangeScore(
+                turn = brain.turnCount, dimension = es.dimension,
+                score = es.score, evidence = es.evidence, bloomsLevel = es.bloomsLevel,
+            ))
+        }
+
+        // 10. Bloom's level
+        decision.bloomsLevelUpdate?.forEach { (topic, level) -> brainService.updateBloomsLevel(sessionId, topic, level) }
+
+        // 11. Adjacent topic hypotheses
+        decision.adjacentTopicsToProbe.forEach { topicId ->
+            KnowledgeAdjacencyMap.getAdjacentTopics(topicId).take(1).forEach { adj ->
+                brainService.addHypothesis(sessionId, KnowledgeAdjacencyMap.toHypothesis(adj, brain.turnCount))
+            }
+        }
+
+        // 12. Dismissal language → probe
+        if (decision.candidateProfileUpdate?.dismissalLanguage == true) {
+            brainService.addAction(sessionId, IntendedAction(
+                id = "dismissal_${brain.turnCount}", type = ActionType.PROBE_DEPTH,
+                description = "Candidate used dismissal language. Probe: 'Walk me through why that seems straightforward.'",
+                priority = 2, expiresAfterTurn = brain.turnCount + 2, source = ActionSource.ANALYST,
+            ))
+        }
+    }
+
+    private inline fun <reified T : Enum<T>> safeEnum(value: String): T? = try {
+        enumValueOf<T>(value.uppercase().replace("-", "_"))
+    } catch (_: Exception) { null }
+}
+
+// ═══ JSON DTOs ═══
+
+@JsonIgnoreProperties(ignoreUnknown = true)
+data class AnalystDecision(
+    val candidateProfileUpdate: CandidateProfileUpdateDto? = null,
+    val newHypothesis: NewHypothesisDto? = null,
+    val hypothesisUpdates: List<HypothesisUpdateDto> = emptyList(),
+    val newClaims: List<NewClaimDto> = emptyList(),
+    val contradictionFound: ContradictionDto? = null,
+    val goalsCompleted: List<String> = emptyList(),
+    val thoughtThreadAppend: String = "",
+    val nextAction: NextActionDto? = null,
+    val exchangeScore: ExchangeScoreDto? = null,
+    val bloomsLevelUpdate: Map<String, Int>? = null,
+    val adjacentTopicsToProbe: List<String> = emptyList(),
+)
+
+@JsonIgnoreProperties(ignoreUnknown = true)
+data class CandidateProfileUpdateDto(
+    val thinkingStyle: String? = null, val overallSignal: String? = null,
+    val currentState: String? = null, val trajectory: String? = null,
+    val anxietyLevel: Float? = null, val flowState: Boolean? = null,
+    val psychologicalSafety: Float? = null, val abstractionLevel: Int? = null,
+    val selfRepairDetected: Boolean? = null, val cognitiveLoadSignal: String? = null,
+    val newAvoidancePattern: String? = null, val dismissalLanguage: Boolean? = null,
+)
+
+@JsonIgnoreProperties(ignoreUnknown = true)
+data class NewHypothesisDto(val claim: String = "", val confidence: Float = 0.6f, val evidence: List<String> = emptyList(), val testStrategy: String = "", val priority: Int = 3, val bloomsLevel: Int = 3)
+@JsonIgnoreProperties(ignoreUnknown = true)
+data class HypothesisUpdateDto(val id: String = "", val newEvidence: String = "", val newStatus: String? = null)
+@JsonIgnoreProperties(ignoreUnknown = true)
+data class NewClaimDto(val claim: String = "", val topic: String = "", val correctness: String = "unverified")
+@JsonIgnoreProperties(ignoreUnknown = true)
+data class ContradictionDto(val claim1: String = "", val claim2: String = "", val description: String = "")
+@JsonIgnoreProperties(ignoreUnknown = true)
+data class NextActionDto(val type: String = "ADVANCE_GOAL", val description: String = "", val priority: Int = 3, val bloomsLevel: Int = 3, val expiresInTurns: Int = 3)
+@JsonIgnoreProperties(ignoreUnknown = true)
+data class ExchangeScoreDto(val dimension: String = "", val score: Float = 0f, val evidence: String = "", val bloomsLevel: Int = 3)
