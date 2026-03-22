@@ -62,17 +62,9 @@ DURING CODING PHASE: If candidate is thinking aloud (no question mark), respond 
         appendLine("================")
         appendLine()
 
-        // 2.5. CODING PHASE RULES (only during active coding)
-        if (state.currentPhaseLabel == "CODING" && brain.interviewType.uppercase() in setOf("CODING", "DSA")) {
-            appendLine("=== CODING PHASE ===")
-            appendLine("Candidate is writing code.")
-            appendLine("STAY SILENT unless they ask a question.")
-            appendLine("Do NOT ask them to explain while coding.")
-            appendLine("Wait for: 'done', 'finished', 'submitted', or code submission event.")
-            appendLine("If they narrate what they're doing: respond 'Mm.' or 'Got it.' only.")
-            appendLine("====================")
-            appendLine()
-        }
+        // 2.5. PHASE-SPECIFIC BEHAVIOR RULES
+        appendLine(buildPhaseRules(state, brain))
+        appendLine()
 
         // 3. CANDIDATE (after turn 2)
         if (brain.candidateProfile.dataPoints >= 2) {
@@ -208,12 +200,116 @@ DURING CODING PHASE: If candidate is thinking aloud (no question mark), respond 
             appendLine()
         }
 
-        // 13. HARD RULES (always last)
+        // 13. HARD RULES (always last — universal rules that apply to ALL phases)
         appendLine(HARD_RULES)
         if (brain.usedAcknowledgments.isNotEmpty()) {
             appendLine("Already used (NEVER repeat): ${brain.usedAcknowledgments.joinToString(", ")}")
             val available = ACKNOWLEDGMENT_POOL.filter { it !in brain.usedAcknowledgments }.take(5)
             appendLine("Available: ${available.joinToString(", ")}")
+        }
+    }
+
+    private fun buildPhaseRules(state: InterviewState, brain: InterviewerBrain): String = buildString {
+        when (state.currentPhaseLabel) {
+            "INTRO", "OPENING" -> {
+                appendLine("=== WARM-UP PHASE ===")
+                appendLine("Be genuinely warm. 1-2 exchanges max.")
+                appendLine("Then present the problem.")
+                appendLine("Do NOT ask generic interview questions.")
+                appendLine("=====================")
+            }
+            "CLARIFICATION", "REQUIREMENTS" -> {
+                appendLine("=== CLARIFICATION PHASE ===")
+                appendLine("Answer questions honestly and concisely.")
+                appendLine("If candidate asks no questions:")
+                appendLine("  Prompt ONCE: 'Any questions about the constraints or edge cases?'")
+                appendLine("Do NOT hint at the solution.")
+                appendLine("Do NOT suggest an approach.")
+                appendLine("===========================")
+            }
+            "APPROACH", "ARCHITECTURE" -> {
+                appendLine("=== APPROACH PHASE ===")
+                appendLine("Listen while candidate thinks.")
+                appendLine("IF they are silent: WAIT. Do not prompt.")
+                appendLine("IF they explain an approach:")
+                appendLine("  Let them finish COMPLETELY.")
+                appendLine("  Then ask ONE of:")
+                appendLine("  'What's the time complexity?'")
+                appendLine("  'Is there a more optimal approach?'")
+                appendLine("  'What are the trade-offs?'")
+                appendLine("When approach is solid:")
+                appendLine("  Say: 'Sounds good. Go ahead and code it.'")
+                appendLine("  NOTHING ELSE after that.")
+                appendLine("======================")
+            }
+            "CODING" -> {
+                appendLine("=== CODING PHASE — CRITICAL ===")
+                appendLine("STAY COMPLETELY SILENT.")
+                appendLine("Do NOT comment on what they type.")
+                appendLine("Do NOT ask questions.")
+                appendLine("Do NOT ask to explain their code.")
+                appendLine("IF candidate explains while coding:")
+                appendLine("  Respond ONLY: 'Mm.' or 'Got it.'")
+                appendLine("  NEVER a question in response.")
+                appendLine("IF candidate asks a question:")
+                appendLine("  Answer in 1 sentence. Then silent.")
+                appendLine("IF candidate says done/finished:")
+                appendLine("  Move to review: 'Walk me through your solution.'")
+                appendLine("================================")
+            }
+            "REVIEW" -> {
+                appendLine("=== REVIEW PHASE ===")
+                appendLine("Candidate finished coding.")
+                appendLine("Ask: 'Can you walk me through your solution?'")
+                appendLine("WHILE they explain: LISTEN. Do not interrupt.")
+                appendLine("AFTER they explain, ask ONE specific question:")
+                appendLine("  About a specific line in their code")
+                appendLine("  About a specific edge case")
+                appendLine("  About time/space complexity")
+                appendLine("Do NOT ask generic questions.")
+                appendLine("Do NOT ask multiple questions at once.")
+                appendLine("====================")
+            }
+            "FOLLOWUP", "DEEP_DIVE" -> {
+                appendLine("=== DEPTH PHASE ===")
+                appendLine("Core is covered. Probe deeper.")
+                appendLine("'Is there a more optimal approach?'")
+                appendLine("'What if the input was sorted?'")
+                appendLine("'Can we reduce the space complexity?'")
+                appendLine("Pick the most relevant one.")
+                appendLine("===================")
+            }
+            "WRAP_UP" -> {
+                appendLine("=== WRAP-UP PHASE ===")
+                appendLine("Brief positive close.")
+                appendLine("ALWAYS end with: 'Do you have any questions for me?'")
+                appendLine("If they ask: answer genuinely.")
+                appendLine("If no questions: 'Great talking to you. Good luck!'")
+                appendLine("=====================")
+            }
+            // BEHAVIORAL phases
+            "STORY_1", "STORY_2", "STORY_3", "FINAL_STORY" -> {
+                appendLine("=== STAR STORY PHASE ===")
+                appendLine("Collecting STAR stories.")
+                appendLine("If vague: 'What specifically did YOU do?'")
+                appendLine("If no result: 'What was the actual outcome?'")
+                appendLine("If 'we' not 'I': 'What was your personal contribution?'")
+                appendLine("Story complete when: situation+task+action+result all present.")
+                appendLine("After a complete story: brief acknowledge then next question.")
+                appendLine("========================")
+            }
+            // SYSTEM_DESIGN phases
+            "DESIGN" -> {
+                appendLine("=== DESIGN PHASE ===")
+                appendLine("Candidate is designing the system.")
+                appendLine("Let them drive. Probe as they go:")
+                appendLine("'What happens when that fails?'")
+                appendLine("'How does that scale to 10x?'")
+                appendLine("'What are the trade-offs?'")
+                appendLine("After each answer: probe immediately.")
+                appendLine("====================")
+            }
+            else -> {} // no phase-specific rules needed
         }
     }
 

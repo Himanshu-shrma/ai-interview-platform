@@ -172,14 +172,17 @@ QUESTION TYPE CLASSIFICATION:
   questionType: classify the AI's question: "assumption"|"implication"|"clarifying"|"evidence"|"viewpoint"|"unknown".
   Target distribution: assumption=40%, implication=25%, clarifying=20%, evidence=10%, viewpoint=5%.
 
-CANDIDATE MESSAGE INTENT:
+CANDIDATE MESSAGE INTENT — detect ONE of:
   candidateIntent: one of:
-  "THINKING_ALOUD" — explaining what they're doing without asking (no question mark, uses "I'm doing", "let me", etc.)
-  "ASKING_QUESTION" — has "?" or asks for help/clarification
-  "SIGNALING_DONE" — says "done", "finished", "I've completed", "submitted", "written the code"
-  "EXPLAINING_APPROACH" — discussing algorithm/strategy before coding
-  "EXPLAINING_CODE" — walking through written code after coding
-  "REQUESTING_HINT" — asks for hint/help explicitly
+  "READING_PROBLEM" — first message after problem, short acknowledgment or simple question about problem
+  "CLARIFYING" — asking about constraints, edge cases, input/output format (contains "?", "what", "can I assume", "should I")
+  "THINKING_ALOUD" — explaining thought process without asking (no "?", uses "I would", "I'm thinking", "so if we")
+  "PROPOSING_APPROACH" — describing specific algorithm/data structure ("I would use", "we can use", "using BFS/HashMap/DP")
+  "CODING_NARRATION" — explaining what they're writing while coding ("I'm adding", "now I", "this loop")
+  "DONE_CODING" — signals implementation complete ("done", "finished", "that's my solution", "I've implemented", "I have provided the solution")
+  "EXPLAINING_CODE" — walking through written code in review ("so here I", "this function", "at this line")
+  "STUCK" — asking for help ("I'm stuck", "not sure how", "can you give a hint", "I don't know how to")
+  "REQUESTING_HINT" — explicit hint request
 
 PSEUDO CODE DETECTION:
   When evaluating if solution_implemented is complete:
@@ -401,15 +404,34 @@ PSEUDO CODE DETECTION:
 
         // 18. Candidate intent handling
         when (decision.candidateIntent?.uppercase()) {
-            "SIGNALING_DONE" -> {
+            "DONE_CODING", "SIGNALING_DONE" -> {
+                brainService.markGoalComplete(sessionId, "solution_implemented")
                 brainService.addAction(sessionId, IntendedAction(
                     id = "done_signal_${brain.turnCount}", type = ActionType.ADVANCE_GOAL,
-                    description = "Candidate signaled done. Move to code review: ask them to walk through their solution.",
+                    description = "Candidate finished coding. Ask: 'Can you walk me through your solution?'",
                     priority = 1, expiresAfterTurn = brain.turnCount + 2, source = ActionSource.ANALYST,
                 ))
+                log.info("TheAnalyst: DONE_CODING detected, marked solution_implemented complete for session={}", sessionId)
             }
-            "THINKING_ALOUD" -> { /* No action — don't interrupt */ }
-            else -> { /* Default handling via other mechanisms */ }
+            "CLARIFYING" -> {
+                // Mark clarification phase in progress — will be completed when they stop asking
+                if ("clarifying_questions_handled" !in brain.interviewGoals.completed) {
+                    brainService.markGoalComplete(sessionId, "clarifying_questions_handled")
+                    log.info("TheAnalyst: clarifying_questions_handled marked complete for session={}", sessionId)
+                }
+            }
+            "PROPOSING_APPROACH" -> {
+                if ("approach_understood" !in brain.interviewGoals.completed) {
+                    brainService.markGoalComplete(sessionId, "approach_understood")
+                    log.info("TheAnalyst: approach_understood marked complete for session={}", sessionId)
+                }
+            }
+            "THINKING_ALOUD", "CODING_NARRATION" -> { /* No action — don't interrupt */ }
+            "READING_PROBLEM" -> {
+                // First response after problem — mark clarification as handled if they don't ask questions
+                // TheAnalyst will re-evaluate next turn
+            }
+            else -> { /* Default handling */ }
         }
 
         // 19. STAR ownership probe (TASK-033)

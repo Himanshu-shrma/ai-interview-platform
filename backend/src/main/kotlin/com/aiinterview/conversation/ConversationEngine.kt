@@ -182,7 +182,7 @@ class ConversationEngine(
         }
 
         val openingMessage = if (questionDesc.isNotBlank()) {
-            "$greeting\n\n**$questionTitle**\n\n$questionDesc\n\nTake a moment to read through it. When you're ready, walk me through your initial thoughts."
+            "$greeting\n\n**$questionTitle**\n\n$questionDesc\n\nTake a moment to read through it."
         } else {
             "$greeting Whenever you're ready, we can begin."
         }

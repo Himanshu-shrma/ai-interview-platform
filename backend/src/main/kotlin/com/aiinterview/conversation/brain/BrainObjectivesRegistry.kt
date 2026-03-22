@@ -13,7 +13,8 @@ object BrainObjectivesRegistry {
     val CODING = InterviewGoals(
         required = listOf(
             Goal("problem_shared", "Problem presented to candidate", "AI sent complete problem description", emptyList(), 1, GoalCategory.FOUNDATION),
-            Goal("approach_understood", "Candidate described their approach", "Candidate explained a specific algorithm or strategy", listOf("problem_shared"), 3, GoalCategory.TECHNICAL),
+            Goal("clarifying_questions_handled", "Candidate had opportunity to ask clarifying questions", "AI asked 'any questions?' AND candidate responded", listOf("problem_shared"), 3, GoalCategory.FOUNDATION, 2),
+            Goal("approach_understood", "Candidate described their approach", "Candidate explained a specific algorithm or strategy", listOf("clarifying_questions_handled"), 3, GoalCategory.TECHNICAL),
             Goal("approach_justified", "Candidate explained WHY their approach works", "Candidate gave justification not just description", listOf("approach_understood"), 2, GoalCategory.TECHNICAL, 4),
             Goal("solution_implemented", "Candidate wrote a real working solution", "hasMeaningfulCode is true", listOf("approach_understood"), 8, GoalCategory.TECHNICAL),
             Goal("complexity_owned", "Time AND space complexity stated and justified", "Candidate stated Big-O with explanation", listOf("solution_implemented"), 2, GoalCategory.EVALUATION, 4),
@@ -125,7 +126,8 @@ private fun inferPhaseLabel(completed: List<String>, interviewType: String): Str
         "complexity_owned" in completed -> "FOLLOWUP"
         "solution_implemented" in completed -> "REVIEW"
         "approach_understood" in completed -> "CODING"
-        "problem_shared" in completed -> "APPROACH"
+        "clarifying_questions_handled" in completed -> "APPROACH"
+        "problem_shared" in completed -> "CLARIFICATION"
         else -> "INTRO"
     }
 }
