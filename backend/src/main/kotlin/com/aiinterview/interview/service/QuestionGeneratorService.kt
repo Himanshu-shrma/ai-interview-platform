@@ -15,9 +15,12 @@ import org.springframework.stereotype.Service
 data class QuestionGenerationParams(
     val category: InterviewCategory,
     val difficulty: Difficulty,
-    val topic: String,
+    val topic: String = "general",
     val targetRole: String? = null,
     val targetCompany: String? = null,
+    val experienceLevel: String? = null,
+    val programmingLanguage: String? = null,
+    val background: String? = null,
     val customInstructions: String? = null,
 )
 
@@ -57,10 +60,51 @@ class QuestionGeneratorService(
             .ifEmpty { "question" }
 
     private fun buildUserPrompt(params: QuestionGenerationParams): String = buildString {
-        appendLine("Generate a ${params.difficulty.name} ${params.category.name} question about: ${params.topic}")
-        params.targetRole?.let { appendLine("Target role: $it") }
-        params.customInstructions?.let { appendLine("Additional instructions: $it") }
+        // TYPE IS THE #1 CONSTRAINT
+        appendLine("INTERVIEW TYPE: ${params.category.name}")
+        appendLine("DIFFICULTY: ${params.difficulty.name}")
+        appendLine()
+        when (params.category) {
+            InterviewCategory.CODING, InterviewCategory.DSA -> {
+                appendLine("THIS MUST BE A DATA STRUCTURES AND ALGORITHMS PROBLEM.")
+                appendLine("It must be solvable by writing code. It must have a single correct algorithmic solution.")
+                appendLine("Examples: Two Sum, LRU Cache, Valid Parentheses, Binary Tree traversal, Sliding Window, DP problems.")
+                appendLine("NEVER generate a system design question. NEVER generate a behavioral question.")
+                appendLine("NEVER ask the candidate to 'design a system' or 'build a service'.")
+            }
+            InterviewCategory.BEHAVIORAL -> {
+                appendLine("THIS MUST BE A BEHAVIORAL STAR-METHOD QUESTION.")
+                appendLine("It must start with 'Tell me about a time...' or 'Describe a situation where...'")
+                appendLine("NEVER ask the candidate to write code or design a system.")
+            }
+            InterviewCategory.SYSTEM_DESIGN -> {
+                appendLine("THIS MUST BE A SYSTEM DESIGN / ARCHITECTURE QUESTION.")
+                appendLine("Examples: Design Twitter, Design URL Shortener, Design a Rate Limiter.")
+                appendLine("NEVER ask the candidate to write a specific algorithm.")
+            }
+            InterviewCategory.CASE_STUDY -> {
+                appendLine("THIS MUST BE A BUSINESS CASE STUDY QUESTION.")
+            }
+        }
+        appendLine()
         params.targetCompany?.let { appendLine(companyTailoring(it.lowercase())) }
+        params.targetRole?.let { appendLine("Target role: $it — tailor the problem domain accordingly.") }
+        params.experienceLevel?.let { level ->
+            appendLine("Experience: $level")
+            when {
+                level.contains("junior", ignoreCase = true) -> appendLine("Keep it straightforward. Single concept.")
+                level.contains("senior", ignoreCase = true) || level.contains("staff", ignoreCase = true) -> appendLine("Complex problem. Multiple concepts. Trade-off discussion expected.")
+                else -> appendLine("Moderate complexity.")
+            }
+        }
+        params.programmingLanguage?.let {
+            if (params.category in listOf(InterviewCategory.CODING, InterviewCategory.DSA)) {
+                appendLine("Language: $it — provide code templates and test cases compatible with $it.")
+            }
+        }
+        params.customInstructions?.let { appendLine("Additional instructions: $it") }
+        appendLine()
+        appendLine("CRITICAL REMINDER: interview_category in the output JSON MUST be: ${params.category.name}")
     }.trim()
 
     private fun companyTailoring(company: String): String = when (company) {
