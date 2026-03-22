@@ -76,7 +76,7 @@ class TheConductor(
             }
             SilenceDecision.WAIT_THEN_RESPOND -> {
                 kotlinx.coroutines.delay(2000)
-                val msg = listOf("Take your time.", "Go ahead.", "Whenever you're ready.", "No rush.").random()
+                val msg = getReassurance(brain)
                 streamStaticResponse(sessionId, msg)
                 persistResponse(sessionId, msg)
                 msg
@@ -223,6 +223,13 @@ class TheConductor(
         true
     } catch (e: Exception) {
         log.error("TheConductor fallback error for session {}: {}", sessionId, e.message); false
+    }
+
+    private fun getReassurance(brain: InterviewerBrain): String = when (brain.interviewType.uppercase()) {
+        "CODING", "DSA" -> listOf("Take your time.", "No rush — work through it.", "You've got time.", "Work at your own pace.").random()
+        "SYSTEM_DESIGN" -> listOf("Take your time thinking through this.", "There's no single right answer.", "Think out loud as you go.", "Draw it out if that helps.").random()
+        "BEHAVIORAL" -> listOf("Take a moment to think of a specific example.", "No rush — think of a real situation.", "Take your time.", "Think through your experience.").random()
+        else -> "Take your time."
     }
 
     /** Detect if response starts with an acknowledgment and track it. */

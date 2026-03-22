@@ -123,6 +123,10 @@ Return ONLY valid JSON. No markdown. No other text.
 
 RULES:
 - candidateProfileUpdate: null = no change. Be conservative.
+  anxietyLevel (0.0-1.0): Count hedges ("maybe","perhaps","I think","I'm not sure"). 3+ = 0.5+. Apologies ("sorry") + self-doubt = 0.7+. Excessive checking ("does that make sense?") = +0.1 each.
+  cognitiveLoadSignal: "overloaded" if 2+ of: contradicts self within message, repeats same thing, "wait sorry" restarts, asks to repeat question, sentences break down. "elevated" if 1 of these.
+  selfRepairDetected: true if "wait actually...", "no I mean...", "let me rethink...", or starts one direction then catches themselves. Self-repair is POSITIVE — active reasoning.
+  psychologicalSafety (0.0-1.0): HIGH signals (+0.15 each): thinks aloud freely, admits uncertainty, genuine curiosity, attempts stretch questions. LOW signals (-0.15 each): formulaic answers, refuses uncertain questions, constant apologizing, defensive.
 - newHypothesis: only if genuinely new insight. testStrategy must be an OPEN question.
 - hypothesisUpdates: newStatus "confirmed"|"refuted"|null.
 - newClaims: ONLY specific falsifiable technical claims. ALL must be true: (1) technical assertion, (2) specific not vague, (3) falsifiable, (4) 5+ words, (5) said by CANDIDATE. INCLUDE: "BFS has O(V+E) time complexity". EXCLUDE: "it should work", "I think this is correct", "let me think".
@@ -130,7 +134,7 @@ RULES:
 - goalsCompleted: only if CLEARLY demonstrated this exchange. Be conservative.
 - thoughtThreadAppend: 1-2 sentences ONLY. MUST reference something specific from THIS exchange. MUST be forward-looking ("next I should..."). MUST NOT be generic ("candidate answered well"). GOOD: "Said BFS without mentioning shortest path — next: probe why BFS specifically?" BAD: "Candidate discussed algorithms."
 - nextAction: type=TEST_HYPOTHESIS|SURFACE_CONTRADICTION|ADVANCE_GOAL|PROBE_DEPTH|REDIRECT|EMOTIONAL_ADJUST|REDUCE_LOAD|PRODUCTIVE_UNKNOWN|MENTAL_SIMULATION
-- exchangeScore: dimension=problem_solving|algorithm|code_quality|communication|efficiency|testing. Score 0.0-10.0.
+- exchangeScore: dimension=problem_solving|algorithm|code_quality|communication|efficiency|testing|initiative|learning_agility. Score 0.0-10.0. PRODUCTIVE STRUGGLE BONUS: if candidate struggled but arrived at correct answer AND selfRepairDetected=true, add +0.5 to the score (cap at 10.0).
 - bloomsLevelUpdate: {"topic": level} where level 1-6.
 - adjacentTopicsToProbe: topic IDs candidate just demonstrated.
 
@@ -279,6 +283,18 @@ BLOOM'S LEVELS (for bloomsLevelUpdate):
         // 10. Bloom's level
         decision.bloomsLevelUpdate?.forEach { (topic, level) -> brainService.updateBloomsLevel(sessionId, topic, level) }
 
+        // 10b. Topic signal budget + depletion detection
+        decision.topicSignalUpdate?.forEach { (topic, signal) ->
+            brainService.updateBrain(sessionId) { b -> b.copy(topicSignalBudget = b.topicSignalBudget + (topic to signal)) }
+            if (signal > 0.8f) {
+                brainService.addAction(sessionId, IntendedAction(
+                    id = "move_on_${topic}_${brain.turnCount}", type = ActionType.WRAP_UP_TOPIC,
+                    description = "SIGNAL DEPLETED for $topic. Move to orthogonal topic. Diminishing returns here.",
+                    priority = 3, expiresAfterTurn = brain.turnCount + 3, source = ActionSource.ANALYST,
+                ))
+            }
+        }
+
         // 11. Adjacent topic hypotheses
         decision.adjacentTopicsToProbe.forEach { topicId ->
             KnowledgeAdjacencyMap.getAdjacentTopics(topicId).take(1).forEach { adj ->
@@ -293,6 +309,34 @@ BLOOM'S LEVELS (for bloomsLevelUpdate):
                 description = "Candidate used dismissal language. Probe: 'Walk me through why that seems straightforward.'",
                 priority = 2, expiresAfterTurn = brain.turnCount + 2, source = ActionSource.ANALYST,
             ))
+        }
+
+        // 13. Cognitive overload → REDUCE_LOAD
+        if (decision.candidateProfileUpdate?.cognitiveLoadSignal == "overloaded") {
+            brainService.addAction(sessionId, IntendedAction(
+                id = "reduce_load_${brain.turnCount}", type = ActionType.REDUCE_LOAD,
+                description = "OVERLOADED: Remove a constraint, simplify, or give concrete example. Do NOT add complexity.",
+                priority = 1, expiresAfterTurn = brain.turnCount + 2, source = ActionSource.COGNITIVE_LOAD,
+            ))
+        }
+
+        // 14. Low psychological safety → RESTORE_SAFETY
+        decision.candidateProfileUpdate?.psychologicalSafety?.let { safety ->
+            if (safety < 0.4f) {
+                brainService.addAction(sessionId, IntendedAction(
+                    id = "safety_${brain.turnCount}", type = ActionType.RESTORE_SAFETY,
+                    description = "LOW SAFETY ($safety). Restore before next question. Options: acknowledge difficulty, normalize, reframe, affirm effort.",
+                    priority = 1, expiresAfterTurn = brain.turnCount + 2, source = ActionSource.SAFETY,
+                ))
+            }
+        }
+
+        // 15. Update average anxiety (running average)
+        decision.candidateProfileUpdate?.anxietyLevel?.let { newLevel ->
+            brainService.updateCandidateProfile(sessionId) { cp ->
+                val n = cp.dataPoints.coerceAtLeast(1).toFloat()
+                cp.copy(avgAnxietyLevel = ((cp.avgAnxietyLevel * (n - 1)) + newLevel) / n)
+            }
         }
     }
 
@@ -315,6 +359,7 @@ data class AnalystDecision(
     val nextAction: NextActionDto? = null,
     val exchangeScore: ExchangeScoreDto? = null,
     val bloomsLevelUpdate: Map<String, Int>? = null,
+    val topicSignalUpdate: Map<String, Float>? = null,
     val adjacentTopicsToProbe: List<String> = emptyList(),
 )
 

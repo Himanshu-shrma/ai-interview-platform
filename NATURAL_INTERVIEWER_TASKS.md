@@ -31,10 +31,10 @@ git branch --show-current
 |-------|-------|------|--------|
 | 1 — Foundation Brain | 8 | 8 | COMPLETE |
 | 2 — Natural Intelligence | 10 | 10 | COMPLETE |
-| 3 — Scientific Validity | 12 | 0 | Not started |
+| 3 — Scientific Validity | 12 | 12 | COMPLETE |
 | 4 — Advanced Cognition | 8 | 0 | Not started |
 | 5 — Deep Research Fixes | 10 | 0 | Not started |
-| **TOTAL** | **48** | **18** | **38%** |
+| **TOTAL** | **48** | **30** | **63%** |
 
 Minimum for merge to master: Phase 1 + Phase 2 complete.
 
@@ -185,51 +185,51 @@ Feature flag: `interview.use-new-brain`. Old agents kept as dead code. Backgroun
 ## PHASE 3 — Scientific Validity
 > Tier 1 tasks (019-023) before others.
 
-### TASK-019 [N] L — Cognitive Load Detection + Reduction (Tier 1)
+### TASK-019 [D] L — Cognitive Load Detection + Reduction (Tier 1)
 **Requires:** TASK-006, TASK-013
 Overload signals: within-turn contradiction, repetition, confusion. REDUCE_LOAD action.
 
-### TASK-020 [N] L — Anxiety Detection + Score Adjustment (Tier 1)
+### TASK-020 [D] L — Anxiety Detection + Score Adjustment (Tier 1)
 **Requires:** TASK-006, TASK-013
 anxietyLevel tracked. If avg > 0.5: +0.5 all scores. Report notes adjustment. DB migration: anxiety_adjustment column.
 
-### TASK-021 [N] M — Productive Struggle Recognition (Tier 1)
+### TASK-021 [D] M — Productive Struggle Recognition (Tier 1)
 **Requires:** TASK-006
 Correct after struggle = +0.5 bonus. selfRepairCount tracked.
 
-### TASK-022 [N] L — Anti-Halo Evaluation Architecture (Tier 1)
+### TASK-022 [D] L — Anti-Halo Evaluation Architecture (Tier 1)
 **Requires:** TASK-001
 ExchangeScore per turn. Dimension scores = weighted average of exchange scores. Holistic transcript for narrative only.
 
-### TASK-023 [N] M — Initiative + Learning Agility Dimensions (Tier 1)
+### TASK-023 [D] M — Initiative + Learning Agility Dimensions (Tier 1)
 **Requires:** TASK-022
 Two new scoring dimensions. Updated formula (8 dims). DB migration. Report page update.
 
-### TASK-024 [N] L — Linguistic Analysis (Tier 2)
+### TASK-024 [D] L — Linguistic Analysis (Tier 2)
 **Requires:** TASK-006
 Confidence, justification, specificity, self-repair, dismissal detection. Dismissal -> probe action.
 
-### TASK-025 [N] L — Signal Depletion + Topic Orthogonality (Tier 2)
+### TASK-025 [D] L — Signal Depletion + Topic Orthogonality (Tier 2)
 **Requires:** TASK-006
 topicSignalBudget. MOVE_ON at 80%. Orthogonal topic preference.
 
-### TASK-026 [N] L — Psychological Safety Protocol (Tier 2)
+### TASK-026 [D] L — Psychological Safety Protocol (Tier 2)
 **Requires:** TASK-006
 psychological_safety goal. RESTORE_SAFETY action. Safety-building opening.
 
-### TASK-027 [N] M — Observer Effect Pressure Reduction (Tier 2)
+### TASK-027 [D] M — Observer Effect Pressure Reduction (Tier 2)
 **Requires:** TASK-006
 90-second coding silence -> "Take your time." 4+ variants.
 
-### TASK-028 [N] L — Dynamic Assessment — Hint Quality (Tier 2)
+### TASK-028 [D] L — Dynamic Assessment — Hint Quality (Tier 2)
 **Requires:** TASK-006
 HintOutcome: applied + generalized tracking. learningAgility influenced.
 
-### TASK-029 [N] L — Forward vs Backward Reasoning Detection (Tier 2)
+### TASK-029 [D] L — Forward vs Backward Reasoning Detection (Tier 2)
 **Requires:** TASK-006
 SCHEMA_DRIVEN vs SEARCH_DRIVEN. +1.0 to algorithm_score for schema-driven.
 
-### TASK-030 [N] M — Situational Judgment Questions (Tier 3)
+### TASK-030 [D] M — Situational Judgment Questions (Tier 3)
 **Requires:** TASK-003
 5+ engineering scenarios. One per behavioral interview.
 

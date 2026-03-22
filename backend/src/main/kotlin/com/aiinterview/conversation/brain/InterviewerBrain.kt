@@ -27,6 +27,7 @@ data class InterviewerBrain(
     val topicSignalBudget: Map<String, Float> = emptyMap(),
     val bloomsTracker: Map<String, Int> = emptyMap(),
     val exchangeScores: List<ExchangeScore> = emptyList(),
+    val hintOutcomes: List<HintOutcome> = emptyList(),
     val currentCode: String? = null,
     val programmingLanguage: String? = null,
     val personality: String = "friendly",
@@ -256,6 +257,17 @@ data class InterviewState(
     val currentPhaseLabel: String,
     val allRequiredComplete: Boolean,
     val bloomsLevelReached: Map<String, Int> = emptyMap(),
+)
+
+// ═══ Hint Outcome Tracking ═══
+
+@JsonIgnoreProperties(ignoreUnknown = true)
+data class HintOutcome(
+    val hintTurn: Int,
+    val hintLevel: Int = 1,
+    val conceptTaught: String = "",
+    val candidateApplied: Boolean = false,
+    val candidateGeneralized: Boolean = false,
 )
 
 // ═══ Transcript Turn (brain-specific) ═══

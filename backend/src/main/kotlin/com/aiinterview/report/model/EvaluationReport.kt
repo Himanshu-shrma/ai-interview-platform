@@ -30,6 +30,11 @@ data class EvaluationReport(
     val hintsUsed: Int = 0,
     /** JSONB — list of NextStep objects with area, gap, action, resource, priority */
     val nextSteps: String? = null,
+    val anxietyLevel: BigDecimal? = null,
+    val anxietyAdjustmentApplied: BigDecimal? = null,
+    val initiativeScore: BigDecimal? = null,
+    val learningAgilityScore: BigDecimal? = null,
+    val researchNotes: String? = null,
     val completedAt: OffsetDateTime? = null,
     val createdAt: OffsetDateTime? = null,
 )

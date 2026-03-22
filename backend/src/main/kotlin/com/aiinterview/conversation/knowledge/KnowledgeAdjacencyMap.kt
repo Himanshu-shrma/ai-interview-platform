@@ -104,6 +104,17 @@ object KnowledgeAdjacencyMap {
             .firstOrNull()
     }
 
+    /** Returns next best topic considering signal depletion — prefers orthogonal when current topic is exhausted. */
+    fun getNextBestTopic(currentTopic: String, knowledgeMap: Map<String, Float>, signalBudget: Map<String, Float>): AdjacentTopic? {
+        val currentSignal = signalBudget[currentTopic] ?: 0f
+        return getAdjacentTopics(currentTopic)
+            .filter { it.topicId !in knowledgeMap.keys }
+            .sortedWith(compareByDescending {
+                if (currentSignal > 0.6f && it.isOrthogonal) 2.0f else it.diagnosticValue
+            })
+            .firstOrNull()
+    }
+
     /** Converts an adjacent topic to a testable hypothesis. */
     fun toHypothesis(topic: AdjacentTopic, turnCount: Int): Hypothesis = Hypothesis(
         id = "adj_${topic.topicId}_t$turnCount",

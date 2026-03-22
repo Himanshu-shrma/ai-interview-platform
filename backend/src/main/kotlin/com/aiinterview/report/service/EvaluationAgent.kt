@@ -41,6 +41,8 @@ data class EvaluationScores(
     val communication: Double = 0.0,
     val efficiency: Double = 0.0,
     val testing: Double = 0.0,
+    val initiative: Double = 5.0,
+    val learningAgility: Double = 5.0,
 )
 
 @Component
@@ -116,7 +118,9 @@ class EvaluationAgent(
                 "    \"codeQuality\": 0.0,\n" +
                 "    \"communication\": 0.0,\n" +
                 "    \"efficiency\": 0.0,\n" +
-                "    \"testing\": 0.0\n" +
+                "    \"testing\": 0.0,\n" +
+                "    \"initiative\": 5.0,\n" +
+                "    \"learningAgility\": 5.0\n" +
                 "  }\n" +
                 "}"
 
@@ -132,10 +136,10 @@ class EvaluationAgent(
 
     private val evaluationTimeoutMs = 60_000L
 
-    suspend fun evaluate(memory: InterviewMemory): EvaluationResult {
+    suspend fun evaluate(memory: InterviewMemory, brain: com.aiinterview.conversation.brain.InterviewerBrain? = null): EvaluationResult {
         return try {
             withTimeout(evaluationTimeoutMs) {
-                attemptEvaluation(memory)
+                attemptEvaluation(memory, brain)
             }
         } catch (e: TimeoutCancellationException) {
             log.error("Evaluation timed out for session {} after {}ms", memory.sessionId, evaluationTimeoutMs)
@@ -143,8 +147,8 @@ class EvaluationAgent(
         }
     }
 
-    private suspend fun attemptEvaluation(memory: InterviewMemory): EvaluationResult {
-        val userPrompt = buildUserPrompt(memory)
+    private suspend fun attemptEvaluation(memory: InterviewMemory, brain: com.aiinterview.conversation.brain.InterviewerBrain? = null): EvaluationResult {
+        val userPrompt = buildUserPrompt(memory) + buildBrainEnrichment(brain)
         val systemPrompt = systemPromptFor(memory.category)
 
         val raw1 = callLlm(systemPrompt, userPrompt)
@@ -220,6 +224,63 @@ class EvaluationAgent(
         if (memory.followUpsAsked.isNotEmpty()) {
             append("Follow-ups asked: ${memory.followUpsAsked.joinToString(", ")}\n")
         }
+    }
+
+    private fun buildBrainEnrichment(brain: com.aiinterview.conversation.brain.InterviewerBrain?): String {
+        if (brain == null) return ""
+        val p = brain.candidateProfile
+        val sb = StringBuilder("\n\n=== BRAIN-DERIVED INSIGHTS ===\n")
+
+        // Exchange scores as primary input
+        if (brain.exchangeScores.isNotEmpty()) {
+            sb.appendLine("EXCHANGE SCORES (use as PRIMARY scoring input — anti-halo):")
+            brain.exchangeScores.groupBy { it.dimension }.forEach { (dim, scores) ->
+                sb.appendLine("  $dim: avg ${"%.1f".format(scores.map { it.score }.average())}/10 (${scores.size} data points)")
+            }
+        }
+
+        // Anxiety adjustment
+        if (p.avgAnxietyLevel > 0.5f) {
+            val adj = if (p.avgAnxietyLevel > 0.7f) "+0.75" else "+0.5"
+            sb.appendLine("ANXIETY ADJUSTMENT: avg ${p.avgAnxietyLevel}. Apply $adj to all dimension scores. Note in report.")
+        }
+
+        // Productive struggle
+        if (p.selfRepairCount > 2) sb.appendLine("PRODUCTIVE STRUGGLE: ${p.selfRepairCount} self-corrections. Positive signal — reward metacognitive awareness.")
+
+        // Reasoning pattern
+        if (p.reasoningPattern == com.aiinterview.conversation.brain.ReasoningPattern.SCHEMA_DRIVEN)
+            sb.appendLine("REASONING: Schema-driven (expert). +1.0 to algorithm score.")
+
+        // Linguistic pattern
+        if (p.linguisticPattern == com.aiinterview.conversation.brain.LinguisticPattern.HEDGED_UNDERSTANDER)
+            sb.appendLine("LINGUISTIC: Hedged understander — low confidence ≠ low competence. Adjust upward.")
+
+        // Safety
+        if (p.psychologicalSafety < 0.5f) sb.appendLine("LOW SAFETY (${p.psychologicalSafety}): Performance may underestimate ability.")
+
+        // Bloom's
+        val highBlooms = brain.bloomsTracker.filter { it.value >= 4 }
+        if (highBlooms.isNotEmpty()) sb.appendLine("DEPTH: ${highBlooms.entries.joinToString(", ") { "${it.key}=L${it.value}" }}")
+
+        // Confirmed/refuted hypotheses
+        brain.hypothesisRegistry.hypotheses.filter { it.status == com.aiinterview.conversation.brain.HypothesisStatus.CONFIRMED }
+            .takeIf { it.isNotEmpty() }?.let { confirmed ->
+                sb.appendLine("CONFIRMED GAPS: ${confirmed.joinToString("; ") { it.claim }}")
+            }
+
+        // Incorrect claims
+        brain.claimRegistry.claims.filter { it.correctness == com.aiinterview.conversation.brain.ClaimCorrectness.INCORRECT }
+            .takeIf { it.isNotEmpty() }?.let { incorrect ->
+                sb.appendLine("INCORRECT CLAIMS: ${incorrect.joinToString("; ") { "T${it.turn}: ${it.claim}" }}")
+            }
+
+        // Initiative guidance
+        sb.appendLine("\nINITIATIVE SCORE (0-10): Did candidate go beyond minimum? Proactive edge cases, voluntary optimizations, genuine curiosity = high.")
+        sb.appendLine("LEARNING AGILITY SCORE (0-10): How effectively did candidate learn during interview? Hint generalization, self-correction, good 'why' questions = high.")
+
+        sb.appendLine("===========================")
+        return sb.toString()
     }
 
     private fun defaultResult() = EvaluationResult(
