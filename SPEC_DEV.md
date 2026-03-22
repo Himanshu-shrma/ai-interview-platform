@@ -1,513 +1,178 @@
 # AI Interview Platform — Complete Developer Specification
 
+**Version:** 2.0 — Natural Interviewer Architecture
+**Last Updated:** 2026-03-22
+**Branch:** feature/natural-interviewer
+**Status:** Brain architecture only (old agents removed)
+
+---
+
 ## Table of Contents
 
 1. [Project Overview](#1-project-overview)
 2. [System Architecture](#2-system-architecture)
 3. [Tech Stack](#3-tech-stack)
-4. [Backend Package Structure](#4-backend-package-structure)
-5. [Conversation Layer — Deep Dive](#5-conversation-layer--deep-dive)
-6. [Interview Memory & Brain Architecture](#6-interview-memory--brain-architecture)
-7. [LLM Provider Layer](#7-llm-provider-layer)
-8. [WebSocket Protocol](#8-websocket-protocol)
-9. [Database Schema](#9-database-schema)
-10. [Authentication & Security](#10-authentication--security)
-11. [Code Execution (Judge0)](#11-code-execution-judge0)
-12. [Report Generation & Evaluation](#12-report-generation--evaluation)
-13. [Interview Objectives System](#13-interview-objectives-system)
-14. [Knowledge Adjacency Map](#14-knowledge-adjacency-map)
-15. [Interview Flow — End to End](#15-interview-flow--end-to-end)
-16. [API Reference](#16-api-reference)
-17. [Configuration Reference](#17-configuration-reference)
-18. [Feature Flag — Natural Interviewer](#18-feature-flag--natural-interviewer)
-19. [Scientific Research Basis](#19-scientific-research-basis)
-20. [Architecture Decisions](#20-architecture-decisions)
-21. [Known Limitations](#21-known-limitations)
-22. [Glossary](#22-glossary)
-
----
-
-Legend for feature flag markers:
-- 🔵 Old system only (`use-new-brain: false`)
-- 🟢 New system only (`use-new-brain: true`)
-- ⚪ Both systems
+4. [Backend Packages](#4-backend-packages)
+5. [Auth & Security](#5-auth--security)
+6. [Shared / LLM Layer](#6-shared--llm-layer)
+7. [Interview Package](#7-interview-package)
+8. [Conversation Package](#8-conversation-package)
+9. [Brain Package](#9-brain-package)
+10. [Objectives & Knowledge](#10-objectives--knowledge)
+11. [Report Package](#11-report-package)
+12. [User Package](#12-user-package)
+13. [Code Execution](#13-code-execution)
+14. [WebSocket Protocol](#14-websocket-protocol)
+15. [Database Schema](#15-database-schema)
+16. [Key Data Flows](#16-key-data-flows)
+17. [Frontend Architecture](#17-frontend-architecture)
+18. [API Reference](#18-api-reference)
+19. [Configuration](#19-configuration)
+20. [Evaluation System](#20-evaluation-system)
+21. [Scientific Research Basis](#21-scientific-research-basis)
+22. [Architecture Decisions](#22-architecture-decisions)
+23. [Known Limitations](#23-known-limitations)
+24. [Glossary](#24-glossary)
 
 ---
 
 ## 1. Project Overview
 
-AI-powered mock interview platform. Candidates take realistic technical interviews (Coding, DSA, Behavioral, System Design) with an adaptive AI interviewer that builds a mental model of each candidate, tracks hypotheses about their understanding, and probes systematically.
+AI-powered mock interview platform. Brain architecture with three agents: TheConductor (real-time responses via gpt-4o), TheAnalyst (background analysis via gpt-4o-mini after every exchange), TheStrategist (meta-review every 5 turns via gpt-4o-mini). 48 research-grounded tasks implemented across 5 phases.
 
-Two interview systems coexist behind a feature flag (`interview.use-new-brain`). The old system uses stage-based rules. The new system uses a cognitive brain architecture grounded in 10 academic research domains.
+Old agent system (InterviewerAgent, PromptBuilder, AgentOrchestrator, SmartOrchestrator, ReasoningAnalyzer, FollowUpGenerator, StageReflectionAgent, CandidateModelUpdater, StateContextBuilder, ToolContextService, TranscriptCompressor) has been deleted. ConversationEngine routes exclusively through the brain.
+
+84 Kotlin files. 38 frontend files. 14 DB migrations. Spring Boot 3.5.9 + Kotlin 1.9.25 + React 18.3.1.
 
 ---
 
 ## 2. System Architecture
 
 ```
-┌──────────────────────────────────────────────────────────────┐
-│  FRONTEND (React + TypeScript, port 3000)                    │
-│  Pages: Dashboard, InterviewSetup, Interview, Report         │
-│  Hooks: useInterviewSocket (WS), useInterviews (REST)        │
-│  Editor: Monaco | Charts: Recharts | Auth: Clerk             │
-└───────────────┬──────────────────────────┬───────────────────┘
-                │ REST (Axios)             │ WebSocket
-                ▼                          ▼
-┌──────────────────────────────────────────────────────────────┐
-│  BACKEND (Kotlin + Spring WebFlux, port 8080)                │
-│                                                              │
-│  ┌─────────────────────────────────────────────────────────┐ │
-│  │ conversation/                                           │ │
-│  │                                                         │ │
-│  │ ⚪ ConversationEngine ──┬── 🔵 InterviewerAgent         │ │
-│  │    (routes by flag)     │   🔵 PromptBuilder            │ │
-│  │                         │   🔵 AgentOrchestrator        │ │
-│  │                         │   🔵 SmartOrchestrator        │ │
-│  │                         │   🔵 ReasoningAnalyzer        │ │
-│  │                         │   🔵 FollowUpGenerator        │ │
-│  │                         │   🔵 HintGenerator            │ │
-│  │                         │   🔵 StageReflectionAgent     │ │
-│  │                         │   🔵 CandidateModelUpdater    │ │
-│  │                         │                               │ │
-│  │                         └── 🟢 brain/                   │ │
-│  │                             🟢 TheConductor             │ │
-│  │                             🟢 NaturalPromptBuilder     │ │
-│  │                             🟢 TheAnalyst               │ │
-│  │                             🟢 TheStrategist            │ │
-│  │                             🟢 BrainService             │ │
-│  │                             🟢 BrainFlowGuard           │ │
-│  │                             🟢 BrainObjectivesRegistry  │ │
-│  │                             🟢 OpenQuestionTransformer  │ │
-│  │                                                         │ │
-│  │ objectives/              knowledge/                     │ │
-│  │ ⚪ ObjectiveTracker      🟢 KnowledgeAdjacencyMap       │ │
-│  │ ⚪ FlowGuard                                            │ │
-│  │ ⚪ InterviewObjectives                                  │ │
-│  └─────────────────────────────────────────────────────────┘ │
-│                                                              │
-│  interview/     report/      user/       shared/ai/          │
-│  ⚪ Services    ⚪ EvalAgent  ⚪ Auth     ⚪ LlmProvider      │
-│  ⚪ WS Handler  ⚪ ReportSvc  ⚪ Usage    ⚪ LlmRegistry      │
-│  ⚪ Redis Mem   ⚪ Report DTO ⚪ Bootstrap ⚪ ModelConfig      │
-│                                          ⚪ OpenAiProvider    │
-└──────────────────┬────────────────┬──────────────────────────┘
-                   │                │
-         ┌─────────┘        ┌──────┘
-         ▼                  ▼
-┌────────────────┐  ┌───────────────┐  ┌───────────────┐
-│  PostgreSQL    │  │  Redis        │  │  Judge0 CE    │
-│  (R2DBC async) │  │  Memory+Brain │  │  (Docker)     │
-│  14 migrations │  │  2 keyspaces  │  │  Code sandbox │
-└────────────────┘  └───────────────┘  └───────────────┘
-         │                  │
-         │    ┌─────────────┘
-         ▼    ▼
-┌────────────────────────┐
-│  OpenAI API            │
-│  gpt-4o (interviewer)  │
-│  gpt-4o-mini (bg)      │
-│  Fallback: Groq/Gemini │
-└────────────────────────┘
+Frontend (React 18, port 3000)
+  Pages: Dashboard, InterviewSetup, Interview, Report
+  Hooks: useInterviewSocket (WS), useInterviews (REST)
+  Editor: Monaco | Charts: Recharts | Auth: Clerk
+    │ REST (Axios)              │ WebSocket
+    ▼                           ▼
+Backend (Kotlin + Spring WebFlux, port 8080)
+  ┌─ Auth: ClerkJwtAuthFilter (order -200) ──────────────┐
+  │  RateLimitFilter (order -150)                         │
+  ├──────────────────────────────────────────────────────-┤
+  │  ConversationEngine (central orchestrator)            │
+  │    ├── TheConductor (real-time, gpt-4o streaming)     │
+  │    ├── TheAnalyst (background, gpt-4o-mini)           │
+  │    ├── TheStrategist (every 5 turns, gpt-4o-mini)     │
+  │    ├── BrainFlowGuard (4 safety rules)                │
+  │    └── BrainService → Redis brain:{sessionId} [3h]    │
+  │  HintGenerator (WS REQUEST_HINT handler)              │
+  │  InterviewState (sealed class, WS state machine)      │
+  ├──────────────────────────────────────────────────────-┤
+  │  InterviewSessionService | RedisMemoryService         │
+  │  EvaluationAgent | ReportService                      │
+  │  CodeExecutionService | Judge0Client                  │
+  │  UserBootstrapService | UsageLimitService              │
+  └──────────────────────────────────────────────────────-┘
+    │              │              │              │
+    ▼              ▼              ▼              ▼
+ PostgreSQL     Redis          Judge0 CE     OpenAI API
+ (R2DBC)      2 keyspaces    (Docker)      gpt-4o/4o-mini
+ 14 migrations  brain: + memory:
 ```
 
 ---
 
 ## 3. Tech Stack
 
-### Backend
+### Backend (pom.xml)
 
 | Technology | Version | Purpose |
 |---|---|---|
-| Kotlin | 1.9.25 | Primary language |
 | Spring Boot | 3.5.9 | Framework |
-| Spring WebFlux | 3.5.9 | Reactive HTTP + WebSocket |
-| R2DBC PostgreSQL | managed | Async database driver |
-| Flyway | managed | DB migrations (JDBC) |
-| Redis (reactive) | managed | Session memory + brain state |
-| kotlinx-coroutines | managed | Async programming |
-| Jackson Kotlin | managed | JSON serialization |
+| Kotlin | 1.9.25 | Language |
+| Java | 21 | Runtime |
+| Spring WebFlux | BOM | Reactive HTTP + WS |
+| R2DBC PostgreSQL | BOM | Async DB driver |
+| Flyway | BOM | DB migrations (JDBC) |
+| Redis Reactive | BOM | Session cache |
+| kotlinx-coroutines | BOM | Async |
+| Jackson Kotlin | BOM | JSON |
 | OpenAI Java SDK | 4.26.0 | LLM integration |
 | nimbus-jose-jwt | 10.8 | JWT validation |
 | mockk | 1.13.12 | Test mocking |
-| Java | 21 | Runtime |
 
-### Frontend
+### Frontend (package.json)
 
 | Technology | Version | Purpose |
 |---|---|---|
 | React | 18.3.1 | UI framework |
 | TypeScript | 5.6.2 | Type safety |
 | Vite | 5.4.10 | Build tool |
-| TanStack Query | 5.90.21 | Data fetching + caching |
-| Clerk React | 5.61.3 | Authentication |
+| TanStack Query | 5.90.21 | Data fetching |
+| Clerk React | 5.61.3 | Auth |
 | Monaco Editor | 4.7.0 | Code editor |
-| Recharts | 3.8.0 | Score charts |
+| Recharts | 3.8.0 | Charts |
 | Tailwind CSS | 4.2.1 | Styling |
-| Axios | 1.13.6 | HTTP client |
-| Radix UI | various | UI primitives (shadcn) |
-| Playwright | 1.58.2 | E2E testing |
+| Axios | 1.13.6 | HTTP |
+| react-router-dom | 7.13.1 | Routing |
+| Playwright | 1.58.2 | E2E tests |
 
-### External Services
+---
 
-| Service | Purpose | Config Key |
+## 4. Backend Packages
+
+| Package | Files | Purpose |
 |---|---|---|
-| OpenAI | GPT-4o interviewer, GPT-4o-mini background | `llm.openai.api-key` |
-| Clerk.dev | JWT auth | `clerk.jwks-url` |
-| Judge0 CE | Code execution sandbox | `judge0.base-url` |
-| PostgreSQL | Persistent storage | `spring.r2dbc.url` |
-| Redis | Session memory + brain cache | `spring.data.redis.url` |
+| `com.aiinterview` | 1 | Application.kt entry point |
+| `com.aiinterview.auth` | 5 | JWT validation, rate limiting, security config |
+| `com.aiinterview.shared` | 3 | CORS, health, response filters |
+| `com.aiinterview.shared.ai` | 8 | LLM interface, registry, providers, config |
+| `com.aiinterview.shared.ai.providers` | 3 | OpenAI, Groq, Gemini |
+| `com.aiinterview.shared.domain` | 1 | Enums (8 enums) |
+| `com.aiinterview.interview.controller` | 3 | REST controllers |
+| `com.aiinterview.interview.dto` | 3 | Request/response DTOs |
+| `com.aiinterview.interview.model` | 5 | DB entities |
+| `com.aiinterview.interview.repository` | 5 | R2DBC repositories |
+| `com.aiinterview.interview.service` | 5 | Session, memory, questions |
+| `com.aiinterview.interview.ws` | 5 | WebSocket handler, registry, messages |
+| `com.aiinterview.conversation` | 3 | ConversationEngine, HintGenerator, InterviewState |
+| `com.aiinterview.conversation.brain` | 9 | Brain architecture (core) |
+| `com.aiinterview.conversation.knowledge` | 1 | KnowledgeAdjacencyMap |
+| `com.aiinterview.report.controller` | 1 | Report REST |
+| `com.aiinterview.report.dto` | 1 | Report DTOs |
+| `com.aiinterview.report.model` | 1 | EvaluationReport entity |
+| `com.aiinterview.report.repository` | 1 | Report repository |
+| `com.aiinterview.report.service` | 2 | EvaluationAgent, ReportService |
+| `com.aiinterview.user.controller` | 1 | Auth REST |
+| `com.aiinterview.user.dto` | 1 | User DTO |
+| `com.aiinterview.user.model` | 3 | User, Org, Invitation entities |
+| `com.aiinterview.user.repository` | 3 | User repositories |
+| `com.aiinterview.user.service` | 2 | Bootstrap, usage limits |
+| `com.aiinterview.code` | 2 | Judge0 client, language map |
+| `com.aiinterview.code.controller` | 1 | Code REST |
+| `com.aiinterview.code.model` | 1 | CodeSubmission entity |
+| `com.aiinterview.code.repository` | 1 | Code repository |
+| `com.aiinterview.code.service` | 1 | Code execution |
 
 ---
 
-## 4. Backend Package Structure
+## 5. Auth & Security
 
-### com.aiinterview.conversation ⚪
+**ClerkJwtAuthFilter** (@Component, order -200) — Validates JWT via JwksValidator. Skips: /health, /actuator, /ws, /api/v1/code/languages. On success: sets User as authentication principal. On failure: 401.
 
-**ConversationEngine** ⚪ @Service
-Purpose: Central orchestrator. Routes to old or new system based on feature flag.
-Methods:
-- `handleCandidateMessage(sessionId, content)` — main entry. If `useNewBrain` and brain exists: calls `handleWithBrain()`. Else: old pipeline.
-- `handleWithBrain(sessionId, content, brain)` — 🟢 new path. Calls TheConductor, launches TheAnalyst + TheStrategist + FlowGuard in background.
-- `startInterview(sessionId)` — sends greeting, initializes brain if flag on.
-- `forceEndInterview(sessionId)` — triggers evaluation, cleans up brain.
-- `transition(sessionId, state)` — updates Redis + sends STATE_CHANGE WS frame.
-- `transitionToNextQuestion(sessionId)` — multi-question progression.
-- `cancelSessionScope(sessionId)` — cancels per-session background coroutines.
-Depends on: RedisMemoryService, InterviewerAgent, WsSessionRegistry, AgentOrchestrator, SmartOrchestrator, StateContextBuilder, ObjectiveTracker, FlowGuard, CandidateModelUpdater, BrainService, TheConductor, TheAnalyst, TheStrategist, BrainFlowGuard, ReportService.
+**RateLimitFilter** (@Component, order -150) — Redis key: `ratelimit:{userId}:{epochMinute}`. Default: 60 req/min. On exceed: 429.
 
-**InterviewerAgent** 🔵 @Component
-Purpose: Streams AI responses using old PromptBuilder. Active when `use-new-brain: false`.
-Methods:
-- `streamResponse(sessionId, memory, userMessage, objectiveState?)` — builds prompt, streams via LLM, returns response text.
-- `hasMeaningfulCode(memory)` — code length > 50, not template.
-- CODING GATE: skips LLM for CODING/DSA when no meaningful code.
-Depends on: LlmProviderRegistry, ModelConfig, PromptBuilder, WsSessionRegistry, RedisMemoryService, ConversationMessageRepository, StateContextBuilder, ToolContextService.
+**WsAuthHandshakeInterceptor** — Validates JWT from WS query param `token`. Stores userId in session attributes. Thread-safe session tracking via ConcurrentHashMap.
 
-**PromptBuilder** 🔵 @Component
-Purpose: Assembles system prompt from stage rules + memory. Old system.
-Methods:
-- `buildSystemPrompt(memory, messageType?, stateCtx?, codeDetails?, testResultSummary?, objectiveState?)` — 13-part prompt assembly: BASE_PERSONA, personality, objectives block, situation context, stage rules (fallback), candidate model block, category framework, company style, candidate context, state block, code, tests, question, message type, history, state.
-Depends on: None (pure function).
+**JwksCache** — Caches JWKS from Clerk. TTL: `clerk.jwks-cache-ttl-minutes` (default 60).
 
-**AgentOrchestrator** 🔵 @Service
-Purpose: Handles CodingChallenge/Evaluating transitions + multi-question flow.
-Methods: `analyzeAndTransition(sessionId, content)`, `handleQuestionComplete()`.
-Depends on: ReasoningAnalyzer, FollowUpGenerator, InterviewerAgent, RedisMemoryService, WsSessionRegistry, ConversationEngine, ReportService.
-
-**SmartOrchestrator** 🔵 @Service
-Purpose: LLM-driven background analysis (old system).
-Depends on: LlmProviderRegistry, ModelConfig, RedisMemoryService, InterviewSessionRepository, ObjectMapper, StageReflectionAgent.
-
-**ReasoningAnalyzer** 🔵 @Service — Analyzes candidate reasoning via LLM.
-**FollowUpGenerator** 🔵 @Service — Generates follow-up questions.
-**HintGenerator** ⚪ @Service — Generates progressive hints (levels 1-3).
-**StageReflectionAgent** 🔵 @Service — Reflects on stage transitions.
-**CandidateModelUpdater** 🔵 @Component — Updates CandidateModel every 2 turns.
-**StateContextBuilder** ⚪ @Component — Fetches fresh state from Redis+DB before LLM calls.
-**ToolContextService** 🔵 @Component — Stage-specific context (code, tests) for REVIEW stage.
-**PersonalityPrompts** 🔵 object — Static personality prompt text.
-
-### com.aiinterview.conversation.brain 🟢
-
-**TheConductor** 🟢 @Component
-Purpose: Replaces InterviewerAgent. Reads InterviewerBrain, applies SilenceIntelligence, builds prompt via NaturalPromptBuilder, streams response.
-Methods:
-- `respond(sessionId, candidateMessage, brain, state)` — silence check → CODING GATE → build prompt → stream → OpenQuestionTransformer → acknowledge tracking → contradiction surfacing.
-- `shouldRespond(brain, message, state)` — returns RESPOND / SILENT / WAIT_THEN_RESPOND. BEHAVIORAL always RESPOND.
-- `getReassurance(brain)` — type-specific reassurance messages (4 variants per type).
-- `detectAndTrackAcknowledgment(sessionId, response)` — prevents phrase repetition.
-Fields: `useNewBrain` (from `@Value("${interview.use-new-brain:false}")`).
-Depends on: BrainService, NaturalPromptBuilder, LlmProviderRegistry, ModelConfig, WsSessionRegistry, ConversationMessageRepository, InterviewSessionRepository.
-
-**TheAnalyst** 🟢 @Component
-Purpose: Single background agent replacing 7 old agents. One gpt-4o-mini call per exchange.
-Methods:
-- `analyze(sessionId, candidateMessage, aiResponse, brain)` — builds prompt, calls LLM, applies 20 update types to brain.
-Updates: CandidateProfile (18 fields), hypotheses (new + updates), claims + contradictions, goals, thought thread, actions, exchange scores, Bloom's levels, topic signal, topic history, challenge rate, ZDP, question types, ownership probes, dismissal probes, cognitive load actions, safety actions, anxiety averages.
-Depends on: BrainService, LlmProviderRegistry, ModelConfig, ObjectMapper.
-
-**TheStrategist** 🟢 @Component
-Purpose: Meta-cognitive reviewer. Runs every 5 turns.
-Methods:
-- `review(sessionId, brain)` — reviews full brain, updates InterviewStrategy (approach, tone, time, avoidance, tokens, selfCritique). Abandons stale hypotheses. Queues FORMATIVE_FEEDBACK when struggling.
-Depends on: BrainService, LlmProviderRegistry, ModelConfig, ObjectMapper.
-
-**BrainService** 🟢 @Service
-Purpose: Redis persistence for InterviewerBrain. Per-session Mutex for atomic updates.
-Key: `brain:{sessionId}`, TTL: 3 hours.
-Methods: `initBrain()`, `getBrain()`, `getBrainOrNull()`, `updateBrain()` (with Mutex), `deleteBrain()`, plus 20+ convenience update methods (appendThought, addHypothesis, updateHypothesis, addClaim, addContradiction, markGoalComplete, addAction, completeTopAction, updateStrategy, updateCandidateProfile, addExchangeScore, incrementTurnCount, appendTopicToHistory, updateChallengeSuccessRate, updateZdpLevel, recordQuestionType, appendUsedAcknowledgment, updateBloomsLevel, appendTranscriptTurn, incrementFormativeFeedback).
-Depends on: ReactiveStringRedisTemplate, ObjectMapper.
-
-**BrainFlowGuard** 🟢 @Component
-Purpose: 4-rule safety net. Returns IntendedAction or null.
-Rules: (1) problem by turn 4, (2) overtime wrap-up, (3) 8-turn stall nudge, (4) behind-schedule pace warning.
-
-**BrainObjectivesRegistry** 🟢 object
-Purpose: Fixed objectives per interview type. CODING 9+3, BEHAVIORAL 8+2, SYSTEM_DESIGN 8+2.
-Methods: `forCategory(category)`, `computeBrainInterviewState(brain, remainingMinutes)`.
-
-**NaturalPromptBuilder** 🟢 @Component
-Purpose: Builds 13-section prompt from InterviewerBrain state.
-Sections: IDENTITY (static) → SITUATION → CANDIDATE (after turn 2) → THOUGHT_THREAD → GOALS + Bloom's → HYPOTHESES (top 2) → CONTRADICTIONS (after turn 5) → STRATEGY → ACTION → CODE (REVIEW) → TESTS → HISTORY (6 turns) → HARD_RULES (static + acknowledgments).
-
-**OpenQuestionTransformer** 🟢 object
-Purpose: Prevents anchoring bias. Transforms "Is it X or Y?" → open questions.
-
-**InterviewerBrain** 🟢 data class (30+ fields)
-See Section 6.2 for complete field documentation.
-
-### com.aiinterview.conversation.objectives ⚪
-
-**ObjectiveTracker** ⚪ @Component — Marks objectives complete via LLM (old system path).
-**FlowGuard** ⚪ @Component — 4-rule safety net for old system (returns String probe).
-**InterviewObjectives** ⚪ data classes — Objective, InterviewObjectives, ObjectivesRegistry.
-**ObjectiveState** ⚪ — computeObjectiveState(), ObjectiveState data class.
-
-### com.aiinterview.conversation.knowledge 🟢
-
-**KnowledgeAdjacencyMap** 🟢 object
-Purpose: Maps demonstrated topics to adjacent unknowns for predictive probing.
-12 topic groups, 3+ adjacent topics each. Methods: `getAdjacentTopics()`, `getNextProbe()`, `getNextBestTopic()`, `getAdjacentTopicsForSuccessRate()`, `toHypothesis()`.
-
-### com.aiinterview.interview ⚪
-
-**InterviewController** @RestController `/api/v1/interviews` — startSession, endSession, getSession, listSessions.
-**QuestionController** @RestController `/api/v1/questions` — getQuestion, listQuestions, generateQuestions.
-**IntegrityController** @RestController `/api/v1/integrity` — reportSignals (tab switch, paste detection).
-**InterviewSessionService** @Service — session lifecycle, question selection, usage checks.
-**QuestionService** @Service — selectQuestionsForSession, getQuestionById.
-**QuestionGeneratorService** @Service — AI question generation via LLM.
-**RedisMemoryService** @Service — old system memory (key: `interview:session:{sessionId}:memory`, TTL: 2h). Per-session Mutex. Methods: initMemory, getMemory, updateMemory, appendTranscriptTurn, appendAgentNote, setComplexityDiscussed, setEdgeCasesCovered, updateStage, incrementQuestionIndex, markObjectivesComplete, incrementTurnCount, deleteMemory.
-**TranscriptCompressor** @Service — compresses rolling transcript via LLM.
-**InterviewWebSocketHandler** @Component — WS message routing. CANDIDATE_MESSAGE, CODE_RUN, CODE_SUBMIT, REQUEST_HINT, END_INTERVIEW, PING.
-**WsSessionRegistry** @Service — tracks active WS sessions, sendMessage().
-
-### com.aiinterview.report ⚪
-
-**EvaluationAgent** @Component — LLM evaluation with 60s timeout, optional brain enrichment.
-**ReportService** @Service — generateAndSaveReport (idempotent), getReport, listReports, getUserStats.
-**ReportController** @RestController `/api/v1` — getReport, listReports, getUserStats.
-
-### com.aiinterview.user ⚪
-
-**AuthController** @RestController `/api/v1/auth` — getUser.
-**UserBootstrapService** @Service — getOrCreateUser with Redis cache (5min TTL).
-**UsageLimitService** @Service — checkUsageAllowed, incrementUsage, getUsageThisMonth.
-
-### com.aiinterview.shared.ai ⚪
-
-**LlmProvider** interface — complete(LlmRequest): LlmResponse, stream(LlmRequest): Flow<String>.
-**LlmProviderRegistry** @Component — primary + fallback provider routing.
-**ModelConfig** @ConfigurationProperties — interviewerModel (gpt-4o), backgroundModel (gpt-4o-mini), generatorModel, evaluatorModel.
-**OpenAiProvider** @Component — OpenAI SDK integration.
-**GroqProvider** @Component — Groq fallback.
-**GeminiProvider** @Component — Gemini fallback.
+**SecurityConfig** — Permits: /health, /actuator/**, /ws/**, /api/v1/code/languages. All else requires auth.
 
 ---
 
-## 5. Conversation Layer — Deep Dive
+## 6. Shared / LLM Layer
 
-### 5.1 Two Systems (Feature Flag)
-
-When `interview.use-new-brain: false` (default):
-1. ConversationEngine.handleCandidateMessage()
-2. InterviewerAgent.streamResponse() — builds prompt via PromptBuilder
-3. Background: SmartOrchestrator + AgentOrchestrator + ObjectiveTracker + FlowGuard + CandidateModelUpdater
-4. Stage machine drives behavior (8 stages: SMALL_TALK → WRAP_UP)
-
-When `interview.use-new-brain: true`:
-1. ConversationEngine.handleWithBrain()
-2. TheConductor.respond() — builds prompt via NaturalPromptBuilder
-3. Background: TheAnalyst (1 call replaces 7 agents) + TheStrategist (every 5 turns)
-4. Objectives drive behavior (9-12 goals per interview type)
-
-### 5.2 Message Flow (New System)
-
-```
-Candidate sends message
-  │
-  ▼
-1. ConversationEngine.handleCandidateMessage()
-2. Check: useNewBrain && brain exists? → handleWithBrain()
-3. Persist message to DB + brain transcript
-4. Transition → CANDIDATE_RESPONDING
-5. Compute InterviewState from objectives + remaining time
-6. BrainFlowGuard.check() → queue action if needed
-7. BrainService.incrementTurnCount()
-8. TheConductor.respond():
-   a. SilenceIntelligence: RESPOND / SILENT / WAIT
-   b. CODING GATE (CODING/DSA only, no code → canned response)
-   c. NaturalPromptBuilder.build() → 13-section prompt
-   d. completeTopAction() from queue
-   e. LlmProviderRegistry.stream() → AI_CHUNK frames to WS
-   f. OpenQuestionTransformer.transform() on response
-   g. detectAndTrackAcknowledgment()
-   h. markContradictionSurfaced() if applicable
-   i. Persist response to DB + brain transcript
-9. Transition → AI_ANALYZING
-10. Background (fire-and-forget on per-session scope):
-    a. TheAnalyst.analyze() — updates full brain
-    b. TheStrategist.review() — every 5 turns
-    c. AgentOrchestrator.analyzeAndTransition() — legacy compatibility
-```
-
-### 5.3 InterviewerAgent (Old System) 🔵
-
-8-stage progression: SMALL_TALK → PROBLEM_PRESENTED → CLARIFYING → APPROACH → CODING → REVIEW → FOLLOWUP → WRAP_UP.
-
-maxTokensFor() per stage: SMALL_TALK=120, PROBLEM_PRESENTED=50, CLARIFYING=60-100, APPROACH=120, CODING=60, REVIEW=150, FOLLOWUP=150, WRAP_UP=100.
-
-CODING GATE: When stage=CODING, category in (CODING, DSA), and !hasMeaningfulCode → skip LLM, return canned response.
-
-Streaming: 10s timeout → fallback to complete() with backgroundModel.
-
-### 5.4 TheConductor (New System) 🟢
-
-SilenceIntelligence decisions:
-- RESPOND: questions (?), help/hint/stuck, done/finished, IDK signals, FlowGuard actions, BEHAVIORAL type
-- SILENT: coding phase + message < 10 chars
-- WAIT_THEN_RESPOND: approach phase + message > 200 chars + no urgent actions
-
-Token budget: `brain.currentStrategy.recommendedTokens` (60-180), calibrated by TheStrategist.
-
-### 5.5 TheAnalyst — Single Background Agent 🟢
-
-One gpt-4o-mini call per exchange. Outputs JSON with 12 top-level fields:
-`candidateProfileUpdate`, `newHypothesis`, `hypothesisUpdates`, `newClaims`, `contradictionFound`, `goalsCompleted`, `thoughtThreadAppend`, `nextAction`, `exchangeScore`, `bloomsLevelUpdate`, `topicSignalUpdate`, `adjacentTopicsToProbe`, `ownershipProbeNeeded`, `zdpUpdate`, `questionType`.
-
-Auto-queued actions on detection: REDUCE_LOAD (cognitive overload), RESTORE_SAFETY (safety < 0.4), PRODUCTIVE_UNKNOWN (IDK signals), MENTAL_SIMULATION (code written), TEST_HYPOTHESIS (new hypothesis), PROBE_DEPTH (dismissal language, ownership gap), WRAP_UP_TOPIC (signal > 0.8).
-
-### 5.6 NaturalPromptBuilder — 13 Sections 🟢
-
-| # | Section | Content | When |
-|---|---------|---------|------|
-| 1 | INTERVIEWER_IDENTITY | 5-line static identity | Always |
-| 2 | SITUATION | Turn, time, phase, goals, challenge calibration | Always |
-| 3 | CANDIDATE | Signal, thinking, state, pressure, trajectory, anxiety, flow, safety, reasoning, avoidance | After turn 2 |
-| 4 | THOUGHT_THREAD | Compressed history + active thread (500 chars) | When non-empty |
-| 5 | GOALS | Completed, remaining (top 3), Bloom's depth | When goals remain |
-| 6 | HYPOTHESES | Top 2 open with test strategy | When hypotheses exist |
-| 7 | CONTRADICTIONS | Top 1 unsurfaced with surfacing guidance | After turn 5 |
-| 8 | STRATEGY | Approach, tone, avoidance from TheStrategist | When strategy set |
-| 9 | ACTION | Top priority action from queue | When action queued |
-| 10 | CODE | Candidate code (max 2000 chars) | REVIEW phase, CODING/DSA |
-| 11 | TESTS | Test results + "don't reveal" rule | When available |
-| 12 | HISTORY | Last 6 turns with `<candidate_input>` tags | Always |
-| 13 | HARD_RULES | Non-negotiable rules + acknowledgment tracking | Always |
-
----
-
-## 6. Interview Memory & Brain Architecture
-
-### 6.1 Old System: InterviewMemory 🔵
-
-Redis key: `interview:session:{sessionId}:memory`, TTL: 2 hours.
-Per-session kotlinx Mutex for atomic updates.
-
-| Field | Type | Default | Purpose |
-|---|---|---|---|
-| sessionId | UUID | — | Session identity |
-| userId | UUID | — | User identity |
-| state | String | — | WS-level state (InterviewState sealed class) |
-| category | String | — | CODING/DSA/BEHAVIORAL/SYSTEM_DESIGN |
-| personality | String | — | Interviewer personality |
-| currentQuestion | InternalQuestionDto? | null | Current question |
-| candidateAnalysis | CandidateAnalysis? | null | ReasoningAnalyzer output |
-| hintsGiven | Int | 0 | Hints used (max 3) |
-| followUpsAsked | List<String> | [] | Follow-up questions asked |
-| currentCode | String? | null | Code editor content |
-| programmingLanguage | String? | null | Selected language |
-| rollingTranscript | List<TranscriptTurn> | [] | Last 6 turns |
-| earlierContext | String | "" | Compressed older transcript |
-| evalScores | EvalScores | zeros | Running scores |
-| interviewStage | String | "SMALL_TALK" | 8-stage progression |
-| currentQuestionIndex | Int | 0 | Multi-question position |
-| totalQuestions | Int | 1 | Total questions |
-| targetCompany | String? | null | Target company |
-| targetRole | String? | null | Target role |
-| experienceLevel | String? | null | Experience level |
-| background | String? | null | Background text |
-| complexityDiscussed | Boolean | false | Checklist: complexity |
-| edgeCasesCovered | Int | 0 | Checklist: edge cases |
-| agentNotes | String | "" | SmartOrchestrator notes |
-| lastTestResult | TestResultCache? | null | Last test execution |
-| completedObjectives | List<String> | [] | Objective tracking |
-| turnCount | Int | 0 | Exchange counter |
-| pendingProbe | String? | null | Next probe to embed |
-| candidateModel | CandidateModel | defaults | Mental model (old) |
-
-### 6.2 New System: InterviewerBrain 🟢
-
-Redis key: `brain:{sessionId}`, TTL: 3 hours.
-Per-session kotlinx Mutex in BrainService.
-
-| Field | Type | Default | Purpose |
-|---|---|---|---|
-| sessionId, userId | UUID | — | Identity |
-| candidateProfile | CandidateProfile | defaults | 18-field behavioral model |
-| hypothesisRegistry | HypothesisRegistry | empty | Beliefs being tested |
-| claimRegistry | ClaimRegistry | empty | Claims + contradictions |
-| interviewGoals | InterviewGoals | from registry | Objectives (replaces stages) |
-| thoughtThread | ThoughtThread | empty | Running inner monologue |
-| currentStrategy | InterviewStrategy | empty | Approach + selfCritique |
-| actionQueue | ActionQueue | empty | Prioritized intended actions |
-| interviewType | String | — | CODING/BEHAVIORAL/SYSTEM_DESIGN |
-| questionDetails | InterviewQuestion | — | Question + ScoringRubric |
-| turnCount | Int | 0 | Exchange counter |
-| usedAcknowledgments | List<String> | [] | Prevents phrase repetition |
-| topicSignalBudget | Map<String, Float> | {} | Information yield per topic |
-| bloomsTracker | Map<String, Int> | {} | Bloom's level per topic (1-6) |
-| exchangeScores | List<ExchangeScore> | [] | Per-turn independent scores |
-| hintOutcomes | List<HintOutcome> | [] | Hint generalization tracking |
-| topicHistory | List<String> | [] | Topic order for interleaving |
-| challengeSuccessRate | Float | 0.7 | 70% target calibration |
-| zdpEdge | Map<String, ZdpLevel> | {} | Zone of Proximal Development |
-| questionTypeHistory | List<String> | [] | Socratic type distribution |
-| formativeFeedbackGiven | Int | 0 | Formative feedback count |
-| currentCode | String? | null | Code editor content |
-| programmingLanguage | String? | null | Selected language |
-| personality | String | "friendly" | Interviewer personality |
-| targetCompany | String? | null | Target company |
-| experienceLevel | String? | null | Experience level |
-| rollingTranscript | List<BrainTranscriptTurn> | [] | Last 8 turns |
-| earlierContext | String | "" | Compressed history |
-| hintsGiven | Int | 0 | Hints used |
-
-### 6.3 CandidateProfile (18 fields) 🟢
-
-| Field | Type | Values | Purpose |
-|---|---|---|---|
-| thinkingStyle | ThinkingStyle | BOTTOM_UP, TOP_DOWN, INTUITIVE, METHODICAL, UNKNOWN | How they approach problems |
-| reasoningPattern | ReasoningPattern | SCHEMA_DRIVEN, SEARCH_DRIVEN, UNKNOWN | Expert vs novice signal |
-| knowledgeMap | Map<String, Float> | topic → 0.0-1.0 | Topic confidence |
-| communicationStyle | CommunicationStyle | VERBOSE, TERSE, CLEAR, CONFUSED, UNKNOWN | How they communicate |
-| pressureResponse | PressureResponse | RISES, FREEZES, STEADY, DEFENSIVE, UNKNOWN | Under pressure behavior |
-| avoidancePatterns | List<String> | free text | Observed avoidance |
-| overallSignal | CandidateSignal | STRONG, SOLID, AVERAGE, STRUGGLING, UNKNOWN | Overall calibration |
-| currentState | EmotionalState | CONFIDENT, NERVOUS, STUCK, FLOWING, FRUSTRATED, NEUTRAL | Current emotion |
-| anxietyLevel | Float | 0.0-1.0 | Per-turn anxiety |
-| avgAnxietyLevel | Float | 0.0-1.0 | Running average |
-| flowState | Boolean | true/false | In flow — don't interrupt |
-| trajectory | PerformanceTrajectory | IMPROVING, DECLINING, STABLE | Performance direction |
-| psychologicalSafety | Float | 0.0-1.0 (default 0.7) | Safety level |
-| linguisticPattern | LinguisticPattern | JUSTIFIED_REASONER, ASSERTIVE_GUESSER, HEDGED_UNDERSTANDER, PATTERN_MATCHER, UNKNOWN | Speech pattern |
-| abstractionLevel | Int | 1-5 | Code narration depth |
-| selfRepairCount | Int | 0+ | Self-corrections observed |
-| cognitiveLoadSignal | CognitiveLoad | NOMINAL, ELEVATED, OVERLOADED | Cognitive state |
-| unknownHandlingPattern | UnknownHandling | REASONS_FROM_PRINCIPLES, ADMITS_AND_STOPS, PANICS, GUESSES_BLINDLY, UNKNOWN | IDK behavior |
-
-### 6.4 ActionQueue (15 types) 🟢
-
-TEST_HYPOTHESIS, SURFACE_CONTRADICTION, ADVANCE_GOAL, PROBE_DEPTH, REDIRECT, WRAP_UP_TOPIC, END_INTERVIEW, EMOTIONAL_ADJUST, REDUCE_LOAD, MAINTAIN_FLOW, RESTORE_SAFETY, PRODUCTIVE_UNKNOWN, REDUCE_PRESSURE, MENTAL_SIMULATION, FORMATIVE_FEEDBACK.
-
-Each action: id, type, description, priority (1=urgent, 5=low), expiresAfterTurn, source (FLOW_GUARD/HYPOTHESIS/CONTRADICTION/GOAL/META_STRATEGY/COGNITIVE_LOAD/SAFETY/ANALYST), bloomsLevel, isInterleavedVariant, originalTopic.
-
----
-
-## 7. LLM Provider Layer
-
-### 7.1 LlmProvider Interface
-
+### LlmProvider Interface
 ```kotlin
 interface LlmProvider {
     suspend fun complete(request: LlmRequest): LlmResponse
@@ -517,352 +182,516 @@ interface LlmProvider {
 }
 ```
 
-### 7.2 LlmRequest
+### LlmProviderRegistry
+Primary + fallback routing. On rate limit or unavailable: tries fallback. Stream: `Flow<String>` with catch → fallback to complete().
 
-```kotlin
-data class LlmRequest(
-    val messages: List<LlmMessage>,
-    val model: String,
-    val maxTokens: Int = 1000,
-    val temperature: Double = 0.7,
-    val responseFormat: ResponseFormat = TEXT | JSON,
-)
-```
-
-### 7.3 Model Configuration
-
-| Config Key | Default | Used For |
+### ModelConfig (@ConfigurationProperties)
+| Key | Default | Used By |
 |---|---|---|
-| `llm.resolved.interviewer-model` | gpt-4o | TheConductor/InterviewerAgent streaming |
-| `llm.resolved.background-model` | gpt-4o-mini | TheAnalyst, TheStrategist, SmartOrchestrator, ReasoningAnalyzer |
-| `llm.resolved.generator-model` | gpt-4o | Question generation |
-| `llm.resolved.evaluator-model` | gpt-4o | EvaluationAgent |
+| interviewerModel | gpt-4o | TheConductor |
+| backgroundModel | gpt-4o-mini | TheAnalyst, TheStrategist, HintGenerator |
+| generatorModel | gpt-4o | QuestionGeneratorService |
+| evaluatorModel | gpt-4o | EvaluationAgent |
 
-### 7.4 Provider Fallback
-
-Primary provider rate limit or unavailable → fallback provider. Configured via `llm.provider` and `llm.fallback-provider`.
+### Providers
+**OpenAiProvider** — OpenAI Java SDK 4.26.0. **GroqProvider** — Groq API. **GeminiProvider** — Google Gemini API.
 
 ---
 
-## 8. WebSocket Protocol
+## 7. Interview Package
 
-### 8.1 Inbound (Client → Server)
+### InterviewSessionService (@Service)
+Methods: `startSession(user, config)` — creates session + selects questions + inits memory. `endSession(sessionId, userId)`. `getSession(sessionId, userId)`. `listSessions(userId, page, size)`. Questions per category: CODING/DSA=2, BEHAVIORAL=3, SYSTEM_DESIGN=1.
 
-| Type | Fields | Handler |
+### RedisMemoryService (@Service)
+Key: `interview:session:{sessionId}:memory`. TTL: 2h. Per-session Mutex. Methods: `initMemory()`, `getMemory()`, `updateMemory()` (atomic with Mutex), `appendTranscriptTurn()` (extractive compression when > 6 turns), `deleteMemory()`, `appendAgentNote()`, `setComplexityDiscussed()`, `setEdgeCasesCovered()`, `updateStage()`, `incrementQuestionIndex()`, `markObjectivesComplete()`, `incrementTurnCount()`.
+
+### InterviewMemory (data class)
+30+ fields including: sessionId, userId, state, category, personality, currentQuestion, candidateAnalysis, hintsGiven, currentCode, programmingLanguage, rollingTranscript, earlierContext, evalScores, interviewStage, currentQuestionIndex, totalQuestions, targetCompany, experienceLevel, complexityDiscussed, edgeCasesCovered, agentNotes, lastTestResult, completedObjectives, turnCount, pendingProbe, candidateModel.
+
+### InterviewWebSocketHandler (@Component)
+Handles: CANDIDATE_MESSAGE (→ ConversationEngine), CODE_RUN (→ CodeExecutionService.runCode), CODE_SUBMIT (→ CodeExecutionService.submitCode), CODE_UPDATE (→ update memory), REQUEST_HINT (→ HintGenerator), END_INTERVIEW (→ ConversationEngine.forceEndInterview), PING (→ PONG). Per-session rate limit: 1 msg/sec via messageCooldowns map.
+
+### WsSessionRegistry (@Service)
+Tracks active sessions. `register(sessionId, sink)`, `deregister(sessionId)`, `sendMessage(sessionId, message)` → serializes to JSON → emits to Sinks.Many.
+
+---
+
+## 8. Conversation Package
+
+### ConversationEngine (@Service)
+Central orchestrator. Dependencies: RedisMemoryService, WsSessionRegistry, ConversationMessageRepository, SessionQuestionRepository, InterviewSessionRepository, QuestionService, ObjectMapper, ReportService (@Lazy), BrainService, TheConductor, TheAnalyst, TheStrategist, BrainFlowGuard.
+
+**handleCandidateMessage(sessionId, content)**:
+1. Load brain via BrainService.getBrainOrNull()
+2. If null: send SESSION_ERROR, return
+3. Persist message to DB + brain transcript + old memory transcript
+4. Transition → CANDIDATE_RESPONDING
+5. Calculate remaining minutes from session.startedAt
+6. Compute InterviewState from brain objectives
+7. BrainFlowGuard.check() → add action if needed
+8. BrainService.incrementTurnCount()
+9. TheConductor.respond() → streams AI response
+10. Transition → AI_ANALYZING
+11. Background (fire-and-forget): TheAnalyst.analyze()
+12. Background (every 5 turns): TheStrategist.review()
+
+**startInterview(sessionId)**:
+1. Load memory from RedisMemoryService
+2. Transition → QUESTION_PRESENTED
+3. Send personality-based greeting via AI_CHUNK frames
+4. Initialize brain via BrainService.initBrain()
+5. Persist greeting to transcript
+
+**forceEndInterview(sessionId)**:
+1. Transition → EVALUATING
+2. Background: ReportService.generateAndSaveReport()
+3. Finally: BrainService.deleteBrain() + cancelSessionScope()
+
+Per-session CoroutineScope (SupervisorJob + Dispatchers.IO). @PreDestroy cancels all.
+
+### HintGenerator (@Service)
+Generates hints at levels 1-3. Used by InterviewWebSocketHandler for REQUEST_HINT.
+
+### InterviewState (sealed class)
+Variants: QuestionPresented, CandidateResponding, AiAnalyzing, FollowUp, CodingChallenge, QuestionTransition, Evaluating, InterviewEnd, Expired. `toString(state)` converts to WS-compatible string.
+
+---
+
+## 9. Brain Package
+
+### InterviewerBrain (data class, 30+ fields)
+
+| Field | Type | Default | Updated By |
+|---|---|---|---|
+| sessionId | UUID | — | init |
+| userId | UUID | — | init |
+| candidateProfile | CandidateProfile | defaults | TheAnalyst |
+| hypothesisRegistry | HypothesisRegistry | empty | TheAnalyst |
+| claimRegistry | ClaimRegistry | empty | TheAnalyst |
+| interviewGoals | InterviewGoals | from registry | TheAnalyst |
+| thoughtThread | ThoughtThread | empty | TheAnalyst |
+| currentStrategy | InterviewStrategy | empty | TheStrategist |
+| actionQueue | ActionQueue | empty | TheAnalyst, FlowGuard |
+| interviewType | String | — | init |
+| questionDetails | InterviewQuestion | — | init |
+| turnCount | Int | 0 | BrainService |
+| usedAcknowledgments | List<String> | [] | TheConductor |
+| topicSignalBudget | Map<String, Float> | {} | TheAnalyst |
+| bloomsTracker | Map<String, Int> | {} | TheAnalyst |
+| exchangeScores | List<ExchangeScore> | [] | TheAnalyst |
+| hintOutcomes | List<HintOutcome> | [] | TheAnalyst |
+| topicHistory | List<String> | [] | TheAnalyst |
+| challengeSuccessRate | Float | 0.7 | TheAnalyst |
+| zdpEdge | Map<String, ZdpLevel> | {} | TheAnalyst |
+| questionTypeHistory | List<String> | [] | TheAnalyst |
+| formativeFeedbackGiven | Int | 0 | TheStrategist |
+| currentCode | String? | null | WS CODE_UPDATE |
+| programmingLanguage | String? | null | init |
+| personality | String | "friendly" | init |
+| rollingTranscript | List<BrainTranscriptTurn> | [] | BrainService |
+
+### CandidateProfile (18 fields)
+
+| Field | Type | Enums |
 |---|---|---|
-| CANDIDATE_MESSAGE | text, codeSnapshot? | ConversationEngine.handleCandidateMessage() |
-| CODE_RUN | code, language, stdin? | CodeExecutionService.runCode() |
-| CODE_SUBMIT | code, language, sessionQuestionId? | CodeExecutionService.submitCode() |
-| REQUEST_HINT | hintLevel | HintGenerator.generateHint() |
-| END_INTERVIEW | reason | ConversationEngine.forceEndInterview() |
-| PING | — | Returns PONG |
+| thinkingStyle | ThinkingStyle | BOTTOM_UP, TOP_DOWN, INTUITIVE, METHODICAL, UNKNOWN |
+| reasoningPattern | ReasoningPattern | SCHEMA_DRIVEN, SEARCH_DRIVEN, UNKNOWN |
+| knowledgeMap | Map<String, Float> | topic → 0.0-1.0 |
+| communicationStyle | CommunicationStyle | VERBOSE, TERSE, CLEAR, CONFUSED, UNKNOWN |
+| pressureResponse | PressureResponse | RISES, FREEZES, STEADY, DEFENSIVE, UNKNOWN |
+| overallSignal | CandidateSignal | STRONG, SOLID, AVERAGE, STRUGGLING, UNKNOWN |
+| currentState | EmotionalState | CONFIDENT, NERVOUS, STUCK, FLOWING, FRUSTRATED, NEUTRAL |
+| anxietyLevel | Float (0-1) | Per-turn |
+| avgAnxietyLevel | Float (0-1) | Running average |
+| flowState | Boolean | — |
+| trajectory | PerformanceTrajectory | IMPROVING, DECLINING, STABLE |
+| psychologicalSafety | Float (0-1, default 0.7) | — |
+| linguisticPattern | LinguisticPattern | JUSTIFIED_REASONER, ASSERTIVE_GUESSER, HEDGED_UNDERSTANDER, PATTERN_MATCHER, UNKNOWN |
+| abstractionLevel | Int (1-5) | 1=syntax, 2=operation, 3=purpose, 4=algorithm, 5=evaluation |
+| selfRepairCount | Int | Self-corrections observed |
+| cognitiveLoadSignal | CognitiveLoad | NOMINAL, ELEVATED, OVERLOADED |
+| unknownHandlingPattern | UnknownHandling | REASONS_FROM_PRINCIPLES, ADMITS_AND_STOPS, PANICS, GUESSES_BLINDLY, UNKNOWN |
 
-### 8.2 Outbound (Server → Client)
+### ActionType (15 values)
+TEST_HYPOTHESIS, SURFACE_CONTRADICTION, ADVANCE_GOAL, PROBE_DEPTH, REDIRECT, WRAP_UP_TOPIC, END_INTERVIEW, EMOTIONAL_ADJUST, REDUCE_LOAD, MAINTAIN_FLOW, RESTORE_SAFETY, PRODUCTIVE_UNKNOWN, REDUCE_PRESSURE, MENTAL_SIMULATION, FORMATIVE_FEEDBACK.
 
-| Type | Fields | Sent When |
+### BrainService (@Service)
+Redis key: `brain:{sessionId}`. TTL: 3h. Per-session Mutex. Methods: initBrain, getBrain, getBrainOrNull, updateBrain (atomic), deleteBrain, + 20 convenience methods (appendThought, addHypothesis, updateHypothesis, addClaim, addContradiction, markContradictionSurfaced, markGoalComplete, markGoalsComplete, addAction, completeTopAction, updateStrategy, updateCandidateProfile, addExchangeScore, incrementTurnCount, appendUsedAcknowledgment, updateBloomsLevel, appendTranscriptTurn, appendTopicToHistory, updateChallengeSuccessRate, updateZdpLevel, recordQuestionType, incrementFormativeFeedback). @PreDestroy cleans mutexes.
+
+### TheConductor (@Component)
+**respond(sessionId, candidateMessage, brain, state)**:
+1. shouldRespond() → RESPOND/SILENT/WAIT_THEN_RESPOND
+2. SILENT: return "" (coding phase, short message)
+3. WAIT: delay 2s, send reassurance
+4. RESPOND: generateResponse()
+5. CODING GATE (CODING/DSA only, no code → canned response)
+6. NaturalPromptBuilder.build() → 13-section prompt
+7. completeTopAction() from queue
+8. tryStreaming() → AI_CHUNK frames (10s timeout)
+9. Fallback: tryFallback() with backgroundModel
+10. OpenQuestionTransformer.transform() on response
+11. detectAndTrackAcknowledgment()
+12. markContradictionSurfaced() if applicable
+13. Persist to DB + brain transcript
+
+### TheAnalyst (@Component)
+**analyze(sessionId, candidateMessage, aiResponse, brain)**:
+Single gpt-4o-mini call. JSON output → AnalystDecision. 20 update operations:
+1. CandidateProfile (18 fields)
+2. New hypothesis + TEST_HYPOTHESIS action
+3. Hypothesis status updates
+4. New claims
+5. Contradiction detection
+6. Goals completed
+7. Thought thread append
+8. Next action queued
+9. Exchange score
+10. Bloom's level update
+11. Topic signal budget + WRAP_UP_TOPIC if depleted
+12. Adjacent topic hypotheses via KnowledgeAdjacencyMap
+13. Dismissal language → PROBE_DEPTH
+14. Cognitive overload → REDUCE_LOAD
+15. Low safety → RESTORE_SAFETY
+16. Anxiety average update
+17. Topic interleaving detection
+18. Challenge success rate update
+19. STAR ownership probe (BEHAVIORAL)
+20. ZDP level update + question type tracking
+
+### TheStrategist (@Component)
+Fires when turnCount % 5 == 0. Updates InterviewStrategy (approach, tone, time, avoidance, recommendedTokens 60-180, selfCritique). Abandons stale hypotheses. Queues FORMATIVE_FEEDBACK when struggling.
+
+### NaturalPromptBuilder (@Component)
+13 sections: IDENTITY (static), SITUATION, CANDIDATE (after turn 2), THOUGHT_THREAD, GOALS + Bloom's, HYPOTHESES (top 2), CONTRADICTIONS (after turn 5), STRATEGY, ACTION, CODE (REVIEW), TESTS, HISTORY (6 turns), HARD_RULES (static + acknowledgments). 20-item acknowledgment pool.
+
+### OpenQuestionTransformer (object)
+Transforms "Is it X or Y?" → open question. Applied to all AI responses.
+
+---
+
+## 10. Objectives & Knowledge
+
+### BrainObjectivesRegistry (object)
+CODING/DSA: 9 required (problem_shared → interview_closed) + 3 optional. BEHAVIORAL: 8 required (psychological_safety → interview_closed) + 2 optional. SYSTEM_DESIGN: 8 required + 2 optional.
+
+### BrainFlowGuard (@Component)
+4 rules: (1) problem by turn 4, (2) overtime wrap-up, (3) 8-turn stall nudge, (4) behind-schedule pace warning. Returns IntendedAction or null.
+
+### KnowledgeAdjacencyMap (object)
+12 topic groups (hash_map_usage, bfs_algorithm, recursion_correct, dp_pattern_recognized, binary_tree_traversal, time_complexity_stated, sorting_algorithm, two_pointer_pattern, high_level_design_done, requirements_gathered, gave_action, star_situation_given). Each: 3+ adjacent topics with probeQuestion, bloomsLevel (1-6), diagnosticValue (0-1), isOrthogonal. Methods: getAdjacentTopics, getNextProbe, getNextBestTopic, getAdjacentTopicsForSuccessRate, toHypothesis.
+
+---
+
+## 11. Report Package
+
+### EvaluationAgent (@Component)
+`evaluate(memory, brain?)`: 60s timeout. Type-aware prompts (CODING/BEHAVIORAL/SYSTEM_DESIGN criteria). Brain enrichment: 15 signals injected. 8-dimension scoring. JSON schema includes initiative + learningAgility + nextSteps. Retry once on parse failure. Default scores on double failure.
+
+### ReportService (@Service)
+`generateAndSaveReport(sessionId)`: Idempotent. Steps: load memory → load brain → EvaluationAgent.evaluate() → compute weighted overall → serialize JSONB → persist EvaluationReport → update session COMPLETED → incrementUsage → SESSION_END WS → delete memory + brain.
+
+Weights: problemSolving=0.25, algorithm=0.20, codeQuality=0.20, communication=0.15, efficiency=0.10, testing=0.10. (Initiative + learningAgility scored but not yet in overall formula — requires frontend update.)
+
+---
+
+## 12. User Package
+
+**UserBootstrapService** — getOrCreateUser(clerkUserId, email, fullName). Redis cache: `user:clerk:{clerkUserId}`, TTL 5min.
+
+**UsageLimitService** — checkUsageAllowed(userId, plan), incrementUsage(userId), getUsageThisMonth(userId). Redis key: `usage:{userId}:interviews:{YYYY-MM}`, TTL 35 days.
+
+---
+
+## 13. Code Execution
+
+**Judge0Client** — Submit code → poll every 500ms → 30s timeout. Base64 encoding. Java class name normalization.
+
+**CodeExecutionService** — `runCode()`: direct execution, result via WS CODE_RUN_RESULT. `submitCode()`: with test cases, result via CODE_RESULT, persisted to DB.
+
+**Supported languages**: Python (71), Java (62), JavaScript (63), TypeScript (74), C++ (54), C (50), Go (60), Rust (73), Ruby (72), Kotlin (78), Swift (83), Scala (81).
+
+---
+
+## 14. WebSocket Protocol
+
+### Inbound (Client → Server)
+| Type | Key Fields | Handler |
 |---|---|---|
-| INTERVIEW_STARTED | sessionId, state | WS connected |
-| AI_CHUNK | delta, done | Each streaming token + final done=true |
+| CANDIDATE_MESSAGE | text, codeSnapshot? | ConversationEngine |
+| CODE_RUN | code, language, stdin? | CodeExecutionService |
+| CODE_SUBMIT | code, language, sessionQuestionId? | CodeExecutionService |
+| CODE_UPDATE | code, language | RedisMemoryService |
+| REQUEST_HINT | hintLevel | HintGenerator |
+| END_INTERVIEW | reason | ConversationEngine |
+| PING | — | → PONG |
+
+### Outbound (Server → Client)
+| Type | Key Fields | Trigger |
+|---|---|---|
+| INTERVIEW_STARTED | sessionId, state | WS connect |
+| AI_CHUNK | delta, done | Each token + final |
+| AI_MESSAGE | text, state | Complete message |
 | STATE_CHANGE | state | State transition |
-| CODE_RUN_RESULT | stdout, stderr, exitCode | Code run complete |
-| CODE_RESULT | status, stdout, stderr, runtimeMs, testResults | Code submit complete |
+| CODE_RUN_RESULT | stdout, stderr, exitCode | Run complete |
+| CODE_RESULT | status, testResults, runtimeMs | Submit complete |
 | HINT_DELIVERED | hint, level, hintsRemaining, refused | Hint generated |
-| QUESTION_TRANSITION | questionIndex, questionTitle, questionDescription, codeTemplates? | Next question |
-| SESSION_END | reportId | Report generated |
+| QUESTION_TRANSITION | questionIndex, title, description, codeTemplates? | Next question |
+| SESSION_END | reportId | Report ready |
 | STATE_SYNC | full state snapshot | Reconnect |
-| ERROR | code, message | Error occurred |
-| PONG | — | Heartbeat response |
+| ERROR | code, message | Any error |
+| PONG | — | Heartbeat |
 
 ---
 
-## 9. Database Schema
+## 15. Database Schema
 
-### 9.1 Tables
+### Tables (10)
 
-**interview_sessions**: id, userId, status (PENDING/ACTIVE/COMPLETED/ABANDONED/EXPIRED), type, config (JSONB), startedAt, endedAt, durationSecs, lastHeartbeat, currentStage, integritySignals.
+**organizations**: id, name, type, plan, seats_limit, created_at.
+**users**: id, org_id (FK), clerk_user_id (unique), email, full_name, role, subscription_tier, created_at.
+**questions**: id, title, description, type, difficulty, topic_tags, examples, constraints, test_cases, solution_hints, optimal_approach, follow_up_prompts, source, deleted_at, generation_params, space_complexity, time_complexity, evaluation_criteria, slug, interview_category, code_templates, function_signature, created_at.
+**interview_sessions**: id, user_id (FK), status, type, config, started_at, ended_at, duration_secs, created_at, last_heartbeat, current_stage, integrity_signals.
+**session_questions**: id, session_id (FK), question_id (FK), order_index, final_code, language_used, submitted_at, created_at.
+**conversation_messages**: id, session_id (FK), role, content, metadata, created_at.
+**code_submissions**: id, session_question_id (FK), user_id (FK), code, language, status, judge0_token, test_results, runtime_ms, memory_kb, submitted_at.
+**evaluation_reports**: id, session_id (FK unique), user_id (FK), overall_score, problem_solving_score, algorithm_score, code_quality_score, communication_score, efficiency_score, testing_score, strengths, weaknesses, suggestions, narrative_summary, dimension_feedback, hints_used, next_steps, anxiety_level, anxiety_adjustment_applied, initiative_score, learning_agility_score, research_notes, completed_at, created_at.
+**interview_templates**: id, name, type, difficulty, config, created_at.
+**org_invitations**: id, org_id (FK), email, role, token (unique), expires_at, accepted_at, created_at.
 
-**questions**: id, title, description, type, difficulty, topicTags, examples, constraintsText, testCases, solutionHints, optimalApproach, followUpPrompts, source, category, codeTemplates, functionSignature, timeComplexity, spaceComplexity, evaluationCriteria, slug, generationParams, createdAt, deletedAt.
+### Migrations (V1-V14)
+V1: organizations. V2: users. V3: questions, sessions, session_questions, messages. V4: code_submissions, evaluation_reports. V5: templates, invitations. V6: extend questions (source, slug, category, complexity). V7: extend reports (dimension_feedback, hints_used, completed_at). V8-V9: convert enums to VARCHAR. V10: convert JSONB to TEXT. V11: session heartbeat. V12: current_stage, code_templates. V13: next_steps, integrity_signals. V14: anxiety_level, anxiety_adjustment_applied, initiative_score, learning_agility_score, research_notes.
 
-**session_questions**: id, sessionId, questionId, orderIndex.
-
-**conversation_messages**: id, sessionId, role (AI/CANDIDATE), content, createdAt.
-
-**evaluation_reports**: id, sessionId, userId, overallScore, problemSolvingScore, algorithmScore, codeQualityScore, communicationScore, efficiencyScore, testingScore, strengths (JSONB), weaknesses (JSONB), suggestions (JSONB), narrativeSummary, dimensionFeedback (JSONB), hintsUsed, nextSteps (JSONB), anxietyLevel, anxietyAdjustmentApplied, initiativeScore, learningAgilityScore, researchNotes, completedAt, createdAt.
-
-**code_submissions**: id, sessionQuestionId, userId, code, language, status, judge0Token, testResults (JSONB), runtimeMs, memoryKb, submittedAt.
-
-**users**: id, orgId, clerkUserId, email, fullName, role, subscriptionTier, createdAt.
-**organizations**: id, name, type, createdAt.
-**org_invitations**: id, orgId, email, role, status, createdAt.
-**interview_templates**: id, name, description, config, createdAt.
-
-### 9.2 Migrations (V1-V14)
-
-| Version | File | What Changed |
+### Redis Keyspaces
+| Pattern | TTL | Purpose |
 |---|---|---|
-| V1 | create_organizations | organizations table |
-| V2 | create_users | users table |
-| V3 | create_interview_tables | sessions, questions, session_questions, messages |
-| V4 | create_code_and_reports | code_submissions, evaluation_reports |
-| V5 | create_misc | interview_templates, org_invitations |
-| V6 | extend_questions_table | generation params, complexity, slug, category, templates |
-| V7 | extend_evaluation_reports | hints_used, completed_at, dimension_feedback |
-| V8 | convert_enums_to_varchar | enum → VARCHAR migration |
-| V9 | convert_remaining_enums | complete enum conversion |
-| V10 | convert_jsonb_to_text | JSONB → TEXT for R2DBC compatibility |
-| V11 | add_session_heartbeat | last_heartbeat column |
-| V12 | add_stage_and_templates | current_stage, interview_templates |
-| V13 | add_next_steps_and_integrity | next_steps, integrity_signals |
-| V14 | add_brain_evaluation_columns | anxiety_level, anxiety_adjustment_applied, initiative_score, learning_agility_score, research_notes |
+| `brain:{sessionId}` | 3h | InterviewerBrain (new system) |
+| `interview:session:{sessionId}:memory` | 2h | InterviewMemory |
+| `user:clerk:{clerkUserId}` | 5min | User cache |
+| `ratelimit:{userId}:{epochMinute}` | 2min | Rate limit counter |
+| `usage:{userId}:interviews:{YYYY-MM}` | 35d | Monthly usage |
 
 ---
 
-## 10. Authentication & Security
+## 16. Key Data Flows
 
-**ClerkJwtAuthFilter** (order -200): Validates JWT from Authorization header via JwksValidator. Skips: /health, /actuator, /ws, /api/v1/code/languages. On success: sets User as principal. On failure: 401.
+### Flow A: Session Creation
+1. POST /api/v1/interviews/sessions → InterviewController.startSession()
+2. InterviewSessionService.startSession(user, config)
+3. UsageLimitService.checkUsageAllowed()
+4. QuestionService.selectQuestionsForSession()
+5. Save InterviewSession (status=PENDING) + SessionQuestions to DB
+6. RedisMemoryService.initMemory()
+7. Return { sessionId, wsUrl }
 
-**RateLimitFilter** (order -150): Redis-based per-user rate limit. Key: `ratelimit:{userId}:{epochMinute}`. Default: 60 req/min.
+### Flow B: Candidate Message → AI Response
+1. CANDIDATE_MESSAGE WS frame → InterviewWebSocketHandler
+2. ConversationEngine.handleCandidateMessage(sessionId, content)
+3. BrainService.getBrainOrNull(sessionId)
+4. Persist message: DB + brain transcript + memory transcript
+5. Transition → CANDIDATE_RESPONDING
+6. computeBrainInterviewState(brain, remainingMinutes)
+7. BrainFlowGuard.check() → queue action if needed
+8. BrainService.incrementTurnCount()
+9. TheConductor.respond():
+   a. shouldRespond() → RESPOND/SILENT/WAIT
+   b. NaturalPromptBuilder.build() (13 sections)
+   c. LlmProviderRegistry.stream() → AI_CHUNK frames
+   d. OpenQuestionTransformer.transform()
+10. Transition → AI_ANALYZING
+11. Background: TheAnalyst.analyze() → updates full brain
+12. Background (every 5 turns): TheStrategist.review()
 
-**WsAuthHandshakeInterceptor**: Validates JWT from WS query param `token`. Stores userId in session attributes.
-
-**UserBootstrapService**: `getOrCreateUser(clerkUserId, email, fullName)`. Redis cache: `user:clerk:{clerkUserId}`, TTL 5 min. Creates org on first user.
+### Flow C: Report Generation
+1. END_INTERVIEW WS or timer → ConversationEngine.forceEndInterview()
+2. Transition → EVALUATING
+3. ReportService.generateAndSaveReport()
+4. Load memory + brain
+5. EvaluationAgent.evaluate(memory, brain) → 8-dimension scores
+6. Compute weighted overallScore
+7. Save EvaluationReport to DB
+8. Update session status=COMPLETED
+9. UsageLimitService.incrementUsage()
+10. SESSION_END WS frame with reportId
+11. BrainService.deleteBrain() + cancelSessionScope()
 
 ---
 
-## 11. Code Execution (Judge0)
+## 17. Frontend Architecture
 
-**Judge0Client**: REST client. submit() → pollResult() loop (500ms interval, 30s timeout). Base64 encoding. Java class name normalization.
+### Routes (App.tsx)
+| Route | Component | Auth |
+|---|---|---|
+| `/` | LandingPage | No |
+| `/sign-in/*` | Clerk SignIn | No |
+| `/sign-up/*` | Clerk SignUp | No |
+| `/dashboard` | DashboardPage | Yes |
+| `/interview/setup` | InterviewSetupPage | Yes |
+| `/interview/:sessionId` | InterviewPage | Yes |
+| `/report/:sessionId` | ReportPage | Yes |
 
-**CodeExecutionService**: `runCode()` — direct execution, result via WS. `submitCode()` — with test cases, results persisted to code_submissions.
+### Pages
+**DashboardPage**: Interview list (paginated), StatsCard (total/avg/best), ProgressChart (line chart from reports), DifficultyRecommendation.
+**InterviewSetupPage**: Category (4), Difficulty (3), Personality (4), Language (select), Role/Company (text), Experience (select), Background (textarea), Duration (30/45/60), difficulty preview card.
+**InterviewPage**: Split panel — ConversationPanel (left) + CodeEditor (right, when coding). HintPanel, TimerDisplay, integrity tracking (tab switch + paste detection).
+**ReportPage**: Hero score (animated), radar chart, 6 dimension bars with tooltips, narrative, strengths/weaknesses/suggestions, study plan (next steps with priority colors), session details.
 
-Supported languages: Python, Java, JavaScript, C++, Go, Ruby, Rust, TypeScript (via LanguageMap).
+### Key Hooks
+| Hook | Query Key | API Call | Returns |
+|---|---|---|---|
+| useInterviewList(page) | ['interviews', page] | listSessions | PagedResponse<SessionSummaryDto> |
+| useInterviewDetail(id) | ['interview', id] | getSession | SessionDetailDto |
+| useStartInterview() | mutation | startSession | navigates to /interview/{id} |
+| useUserStats() | ['userStats'] | getStats | UserStatsDto |
+| useLanguages() | ['languages'] | getLanguages | string[] |
+| useReportList(page, size) | ['reports', page, size] | listReports | ReportSummaryDto[] |
+| useReport(sessionId) | ['report', id] | getReport | ReportDto (retry 404 x10, 3s delay) |
+| useInterviewSocket | — | WebSocket | { status, send, disconnect } |
+| useConversation | — | — | { messages, addCandidate, appendAiToken, finalize } |
+
+### Vite Manual Chunks
+monaco (@monaco-editor/react, monaco-editor), recharts, clerk (@clerk/clerk-react).
 
 ---
 
-## 12. Report Generation & Evaluation
+## 18. API Reference
 
-### 12.1 Scoring (8 Dimensions) 🟢
+| Method | Path | Auth | Purpose |
+|---|---|---|---|
+| POST | /api/v1/interviews/sessions | Yes | Start interview |
+| GET | /api/v1/interviews/sessions | Yes | List sessions (page, size) |
+| GET | /api/v1/interviews/sessions/{id} | Yes | Session detail |
+| POST | /api/v1/interviews/sessions/{id}/end | Yes | End interview |
+| GET | /api/v1/reports/{sessionId} | Yes | Get report |
+| GET | /api/v1/reports | Yes | List reports (page, size) |
+| GET | /api/v1/users/me | Yes | Get user |
+| GET | /api/v1/users/me/stats | Yes | User stats |
+| GET | /api/v1/code/languages | No | Supported languages |
+| POST | /api/v1/integrity | Yes | Report integrity signals |
+| GET | /health | No | Health check |
 
+---
+
+## 19. Configuration
+
+| Variable | Default | Required | Purpose |
+|---|---|---|---|
+| DATABASE_URL | r2dbc:postgresql://localhost:5432/aiinterview | Yes | R2DBC |
+| FLYWAY_URL | jdbc:postgresql://localhost:5432/aiinterview | Yes | Migrations |
+| REDIS_URL | redis://localhost:6379 | Yes | Redis |
+| OPENAI_API_KEY | — | Yes | OpenAI |
+| CLERK_JWKS_URL | — | Yes | JWT validation |
+| CLERK_PUBLISHABLE_KEY | — | Yes | Frontend auth |
+| JUDGE0_BASE_URL | http://localhost:2358 | Yes | Code sandbox |
+| JUDGE0_AUTH_TOKEN | — | Yes | Judge0 auth |
+| VITE_CLERK_PUBLISHABLE_KEY | — | Yes | Frontend Clerk |
+| VITE_API_BASE_URL | http://localhost:8080 | No | API URL |
+| VITE_WS_URL | ws://localhost:8080 | No | WS URL |
+
+---
+
+## 20. Evaluation System
+
+### 8 Dimensions
 | Dimension | Weight | Measures |
 |---|---|---|
-| problem_solving | 20% | Approach process, breakdown, constraints |
+| problem_solving | 20% | Approach, breakdown, constraints |
 | algorithm_depth | 15% | Understanding WHY (not just correct choice) |
-| code_quality | 15% | Readability, naming, structure, abstraction |
+| code_quality | 15% | Readability, naming, abstraction |
 | communication | 15% | Thinking process narration |
 | efficiency | 10% | Time + space complexity |
 | testing | 10% | Verification, edge cases |
 | initiative | 10% | Proactivity beyond minimum |
-| learning_agility | 5% | In-interview learning rate |
+| learning_agility | 5% | In-interview learning |
 
-Old system (6 dimensions): problem_solving 25%, algorithm 20%, code_quality 20%, communication 15%, efficiency 10%, testing 10%.
-
-### 12.2 Score Adjustments 🟢
-
-| Adjustment | Condition | Amount |
+### Score Adjustments
+| Condition | Amount | Research |
 |---|---|---|
-| High anxiety | avgAnxietyLevel > 0.7 | +0.75 all dimensions |
-| Moderate anxiety | avgAnxietyLevel > 0.5 | +0.50 all dimensions |
-| Productive struggle | selfRepair + correct | +0.50 per exchange |
-| Schema-driven | ReasoningPattern.SCHEMA_DRIVEN | +1.0 algorithm |
-| High abstraction | abstractionLevel >= 4 | +1.0 code_quality |
+| avgAnxietyLevel > 0.7 | +0.75 all dims | Lupien 2007 |
+| avgAnxietyLevel > 0.5 | +0.50 all dims | Picard 1997 |
+| selfRepair + correct | +0.50 per exchange | Bjork 1994 |
+| SCHEMA_DRIVEN | +1.0 algorithm | Chi 1981 |
+| abstractionLevel >= 4 | +1.0 code_quality | Brooks 1983 |
 
-### 12.3 Anti-Halo Architecture 🟢
+### Anti-Halo
+ExchangeScores computed independently per turn. Dimension scores = recency-weighted average. Holistic transcript for narrative only.
 
-Exchange scores computed independently per turn by TheAnalyst. Dimension scores = recency-weighted average of per-exchange scores. Holistic transcript for narrative only. Exchange scores trusted over impression on conflict.
-
-### 12.4 Brain Enrichment (15 signals) 🟢
-
-Injected into EvaluationAgent prompt when brain is available: confirmed hypotheses, incorrect claims, exchange score summary, anxiety adjustment, productive struggle count, reasoning pattern, linguistic pattern, psychological safety, hint outcomes, Bloom's levels, ZDP edge topics, challenge calibration, interleaving, STAR ownership, scoring rubric.
-
-### 12.5 Report Generation Flow
-
-1. ConversationEngine.forceEndInterview() → Evaluating state
-2. ReportService.generateAndSaveReport() (idempotent)
-3. Load memory + brain (if exists)
-4. EvaluationAgent.evaluate(memory, brain?) → EvaluationResult
-5. Compute weighted overallScore
-6. Persist EvaluationReport
-7. Update session status → COMPLETED
-8. UsageLimitService.incrementUsage()
-9. Send SESSION_END via WS
-10. Delete Redis memory + brain
+### Brain Enrichment (15 signals)
+Confirmed hypotheses, incorrect claims, exchange scores, anxiety, struggle count, reasoning pattern, linguistic pattern, safety, hint outcomes, Bloom's levels, ZDP edge, challenge rate, interleaving, STAR ownership, scoring rubric.
 
 ---
 
-## 13. Interview Objectives System 🟢
-
-### CODING/DSA (9 required + 3 optional)
-
-problem_shared → approach_understood → approach_justified → solution_implemented → complexity_owned → edge_cases_explored → reasoning_depth_assessed → mental_simulation_tested → interview_closed.
-Optional: optimization_explored, follow_up_variant, reach_evaluate_level.
-
-### BEHAVIORAL (8 required + 2 optional)
-
-psychological_safety → star_q1_complete → star_q1_ownership → star_q2_complete → star_q2_ownership → star_q3_complete → learning_demonstrated → interview_closed.
-Optional: star_q4_complete, situational_judgment.
-
-### SYSTEM_DESIGN (8 required + 2 optional)
-
-problem_shared → requirements_gathered → high_level_design → component_deep_dive → tradeoffs_acknowledged → failure_modes_explored → scalability_addressed → interview_closed.
-Optional: alternative_considered, data_model_defined.
-
----
-
-## 14. Knowledge Adjacency Map 🟢
-
-12 topic groups: hash_map_usage, bfs_algorithm, recursion_correct, dp_pattern_recognized, binary_tree_traversal, time_complexity_stated, sorting_algorithm, two_pointer_pattern, high_level_design_done, requirements_gathered, gave_action, star_situation_given.
-
-Each has 3+ adjacent topics with: probeQuestion (open, non-leading), bloomsLevel (1-6), diagnosticValue (0-1), isOrthogonal.
-
-Flow: Candidate demonstrates topic X → getAdjacentTopics(X) → filter by knowledgeMap → prefer orthogonal when signal > 0.6 → toHypothesis() → TEST_HYPOTHESIS action.
-
----
-
-## 15. Interview Flow — End to End
-
-1. User selects category, difficulty, personality on InterviewSetupPage
-2. POST `/api/v1/interviews/sessions` → InterviewSessionService.startSession()
-3. Session created in DB (status=PENDING), questions selected, RedisMemoryService.initMemory()
-4. Frontend connects WebSocket to `/ws/interview/{sessionId}`
-5. WsAuthHandshakeInterceptor validates JWT
-6. InterviewWebSocketHandler.handle() → register session
-7. ConversationEngine.startInterview() → greeting message + brain init (if flag on)
-8. Candidate sends CANDIDATE_MESSAGE
-9. ConversationEngine.handleCandidateMessage() or handleWithBrain()
-10. AI response streamed via AI_CHUNK frames
-11. Background agents update state (TheAnalyst or SmartOrchestrator)
-12. Repeat 8-11 until END_INTERVIEW or timer expires
-13. ConversationEngine.forceEndInterview() → Evaluating state
-14. ReportService.generateAndSaveReport()
-15. SESSION_END sent via WS with reportId
-16. Frontend navigates to ReportPage
-
----
-
-## 16. API Reference
-
-| Method | Path | Auth | Purpose |
-|---|---|---|---|
-| POST | `/api/v1/interviews/sessions` | Required | Start interview |
-| GET | `/api/v1/interviews/sessions` | Required | List sessions (paginated) |
-| GET | `/api/v1/interviews/sessions/{id}` | Required | Get session detail |
-| POST | `/api/v1/interviews/sessions/{id}/end` | Required | End interview |
-| GET | `/api/v1/reports/{sessionId}` | Required | Get report |
-| GET | `/api/v1/reports` | Required | List reports |
-| GET | `/api/v1/users/me/stats` | Required | User stats |
-| GET | `/api/v1/users/me` | Required | Get user |
-| GET | `/api/v1/code/languages` | Public | Supported languages |
-| POST | `/api/v1/integrity` | Required | Report integrity signals |
-| GET | `/health` | Public | Health check |
-
----
-
-## 17. Configuration Reference
-
-| Variable | Default | Purpose |
-|---|---|---|
-| `DATABASE_URL` | r2dbc:postgresql://localhost:5432/aiinterview | R2DBC connection |
-| `FLYWAY_URL` | jdbc:postgresql://localhost:5432/aiinterview | Migration connection |
-| `REDIS_URL` | redis://localhost:6379 | Redis connection |
-| `OPENAI_API_KEY` | — | OpenAI API key |
-| `CLERK_JWKS_URL` | — | Clerk JWKS endpoint |
-| `CLERK_PUBLISHABLE_KEY` | — | Clerk frontend key |
-| `JUDGE0_BASE_URL` | http://localhost:2358 | Judge0 endpoint |
-| `JUDGE0_AUTH_TOKEN` | — | Judge0 auth |
-| `interview.use-new-brain` | false | Feature flag |
-| `interview.free-tier-limit` | 3 | Free interviews/month |
-| `interview.redis-ttl-hours` | 2 | Memory TTL |
-| `rate-limit.requests-per-minute` | 60 | HTTP rate limit |
-
----
-
-## 18. Feature Flag — Natural Interviewer
-
-```yaml
-interview:
-  use-new-brain: false  # default
-```
-
-| Flag | Response Path | Background Agents | Prompt System |
-|---|---|---|---|
-| false | InterviewerAgent | SmartOrchestrator + 6 others | PromptBuilder (stage-based) |
-| true | TheConductor | TheAnalyst + TheStrategist | NaturalPromptBuilder (brain-based) |
-
-Migration: false (current) → internal testing → beta 10% → all users → remove old agents (30 days).
-Rollback: set false. Immediate. No data migration. Brain Redis keys expire in 3 hours.
-
----
-
-## 19. Scientific Research Basis 🟢
+## 21. Scientific Research Basis
 
 | Domain | Research | Implementation |
 |---|---|---|
 | Cognitive Science | Sweller 1988, Chi 1981 | Cognitive load detection, schema/search reasoning |
-| Psycholinguistics | Hyland 1996, Schiffrin 1987 | Anxiety detection, dismissal probing, specificity 1-4 |
-| Educational Psychology | Anderson 2001, Vygotsky 1978, Feuerstein 1980, Bjork 1994 | Bloom's tracker, ZDP targeting, hint generalization, 70% calibration |
-| Behavioral Science | Thorndike 1920, Kahneman 1974, Behroozi 2019 | Anti-halo scoring, anchoring prevention, observer effect |
-| Affective Computing | Picard 1997, Lupien 2007 | Anxiety adjustment (+0.5/+0.75) |
-| Org Psychology | Schmidt/Hunter 1998, Campion 1994 | Initiative + learning agility, structured objectives |
+| Psycholinguistics | Hyland 1996, Schiffrin 1987 | Anxiety detection, dismissal probing |
+| Educational Psychology | Anderson 2001, Vygotsky 1978, Feuerstein 1980, Bjork 1994 | Bloom's tracker, ZDP, hint generalization, 70% calibration |
+| Behavioral Science | Thorndike 1920, Kahneman 1974, Behroozi 2019 | Anti-halo, anchoring prevention, observer effect |
+| Affective Computing | Picard 1997, Lupien 2007 | Anxiety adjustment |
+| Org Psychology | Schmidt/Hunter 1998, Campion 1994 | Initiative, learning agility, structured objectives |
 | Information Theory | Shannon 1948, Cronbach 1951 | Signal depletion, dimension independence |
-| Neuroscience | Bjork 1994, Kornell/Bjork 2008 | Productive struggle bonus, topic interleaving |
-| Social Psychology | Edmondson 1999, Bernieri 1996 | Psychological safety, rapport building |
-| CS Research | Brooks 1983, Wiedenbeck 1991 | Abstraction levels 1-5, mental simulation |
+| Neuroscience | Bjork 1994, Kornell/Bjork 2008 | Struggle bonus, interleaving |
+| Social Psychology | Edmondson 1999, Bernieri 1996 | Safety protocol, rapport |
+| CS Research | Brooks 1983, Wiedenbeck 1991 | Abstraction levels, mental simulation |
 
 ---
 
-## 20. Architecture Decisions
+## 22. Architecture Decisions
 
 | Decision | Why | Trade-off |
 |---|---|---|
-| Feature flag (not rewrite) | Zero-risk rollout, A/B testing | Both systems maintained temporarily |
-| Per-session Mutex (kotlinx) | GET→modify→SET not atomic | Serializes writes per session (not across) |
-| Per-session CoroutineScope | Singleton scope leaks on hung LLM calls | ConcurrentHashMap overhead per session |
-| 1 analyst replaces 7 agents | Single LLM call, coherent brain update | Larger prompt, single point of failure |
-| Exchange scores primary | Prevents halo effect from early impression | More LLM calls (1 per exchange for scoring) |
-| Pending eval (not 3.0 default) | Default 3.0 was product-destroying | Frontend must handle pending state |
-| XML tags for candidate input | Prompt injection mitigation | ~10 extra tokens per prompt |
-| Open question transformer | Prevents anchoring bias | May occasionally transform valid binary questions |
+| 3 agents (not 1 or 7) | Conductor=sync, Analyst=async, Strategist=periodic. Clean separation. | 2 extra LLM calls per interview |
+| Brain in separate Redis key | Brain TTL 3h vs memory 2h. Independent lifecycle. | Two keyspaces to manage |
+| Remove old system entirely | Dead code complexity. Single path simplifies debugging. | No instant rollback |
+| Per-session Mutex | GET→modify→SET not atomic. | Serializes writes per session |
+| Per-session CoroutineScope | Singleton scope leaked on hung LLM calls. | ConcurrentHashMap overhead |
+| Extractive compression | Zero LLM cost for thought thread. | Lower quality than LLM summary |
+| FlowGuard 4 rules max | Minimal intervention. AI decides everything else. | May miss edge cases |
+| TEXT not JSONB | R2DBC driver doesn't support JSONB natively. | No DB-level JSON queries |
+| Exchange scores primary | Prevents halo effect. | More data per interview |
 
 ---
 
-## 21. Known Limitations
+## 23. Known Limitations
 
 | Issue | Location | Impact | Fix Path |
 |---|---|---|---|
-| Judge0 privileged Docker | docker-compose | Container escape risk | Separate VM or gVisor |
-| JWT in WS query param | WsAuthHandshakeInterceptor | Token in logs/history | Short-lived ticket endpoint |
+| Judge0 privileged Docker | docker-compose | Container escape risk | Separate VM |
+| JWT in WS query param | WsAuthHandshakeInterceptor | Token in logs | Ticket endpoint |
 | No circuit breakers | LlmProviderRegistry | Slow fail on outage | Resilience4j |
-| Default 3.0 on eval timeout | EvaluationAgent | Misleading scores | Pending state + retry |
-| No structured LLM logging | All agents | Silent failures | LlmCallLogger + Micrometer |
-| Brain size unbounded | BrainService | Redis memory growth | Max field sizes, compression |
-| No automated testing of brain | conversation/brain/ | Regression risk | Unit + integration tests |
+| Brain size unbounded | BrainService | Redis memory growth | Max field sizes |
+| No brain unit tests | conversation/brain/ | Regression risk | Test suite |
+| Initiative/agility not in overall formula | ReportService | New dims scored but not weighted | Frontend + formula update |
+| HintGenerator still uses old memory | HintGenerator.kt | Not brain-aware | Rewrite to use brain |
+| Frontend shows 6 dims not 8 | ReportPage.tsx | Initiative + agility invisible | Add 2 bars |
 
 ---
 
-## 22. Glossary
+## 24. Glossary
 
 | Term | Definition |
 |---|---|
-| InterviewerBrain | 🟢 Unified cognitive state. 30+ fields replacing InterviewMemory. Redis key: `brain:{sessionId}`. |
-| InterviewMemory | 🔵 Session state for old system. Redis key: `interview:session:{sessionId}:memory`. |
-| TheConductor | 🟢 Real-time response generator. Replaces InterviewerAgent. |
-| TheAnalyst | 🟢 Background agent (1 call/exchange). Replaces 7 old agents. |
-| TheStrategist | 🟢 Meta-cognitive reviewer (every 5 turns). |
-| CandidateProfile | 🟢 18-field behavioral model within InterviewerBrain. |
-| HypothesisRegistry | 🟢 Beliefs being tested about candidate knowledge. Max 5 open. |
-| ClaimRegistry | 🟢 Specific technical claims + detected contradictions. |
-| ActionQueue | 🟢 Prioritized intended actions (15 types). Consumed by TheConductor. |
-| ThoughtThread | 🟢 Running inner monologue. Extractive compression at 600 chars. |
-| InterviewStrategy | 🟢 Current approach, tone, avoidance, selfCritique. Updated every 5 turns. |
-| ObjectiveState | Computed state from goals + time. Phase labels are informational only. |
-| FlowGuard | 4-rule safety net. Old: returns String. New: returns IntendedAction. |
-| SilenceIntelligence | 🟢 3-way decision in TheConductor: RESPOND / SILENT / WAIT_THEN_RESPOND. |
-| OpenQuestionTransformer | 🟢 Converts leading/binary questions to open ones. Prevents anchoring. |
-| KnowledgeAdjacencyMap | 🟢 12 topic groups for predictive probing. Maps known → adjacent unknown. |
-| ExchangeScore | 🟢 Per-turn score (dimension, score, evidence, bloomsLevel). Anti-halo. |
-| ZdpLevel | 🟢 Zone of Proximal Development. canDoAlone / canDoWithPrompt / cannotDo. |
-| ScoringRubric | 🟢 Per-question scoring checklist generated from optimalApproach. |
-| use-new-brain | Feature flag. false = old system, true = brain system. |
-| backgroundModel | gpt-4o-mini. Used by TheAnalyst, TheStrategist, all background agents. |
-| interviewerModel | gpt-4o. Used by TheConductor and InterviewerAgent for streaming. |
-| fire-and-forget | Background coroutine launched on per-session scope. Never blocks response. |
+| InterviewerBrain | Unified cognitive state in Redis (brain:{sessionId}). 30+ fields. |
+| CandidateProfile | 18-field behavioral model within brain. Updated by TheAnalyst. |
+| TheConductor | Real-time response generator. Streams via gpt-4o. |
+| TheAnalyst | Background agent (1 call/exchange). Updates full brain. Replaces 7 old agents. |
+| TheStrategist | Meta-cognitive reviewer (every 5 turns). Updates strategy + selfCritique. |
+| BrainService | Redis persistence for brain. Per-session Mutex. |
+| BrainFlowGuard | 4-rule safety net. Returns IntendedAction or null. |
+| NaturalPromptBuilder | 13-section brain-driven prompt builder. |
+| OpenQuestionTransformer | Converts leading/binary questions to open ones. |
+| KnowledgeAdjacencyMap | 12 topic groups for predictive probing. |
+| ActionQueue | Prioritized actions (15 types). Consumed by TheConductor. |
+| ExchangeScore | Per-turn independent score. Anti-halo. |
+| HypothesisRegistry | Beliefs being tested. Max 5 open. |
+| ClaimRegistry | Specific claims + contradictions. |
+| ThoughtThread | Running inner monologue. Extractive compression at 600 chars. |
+| InterviewStrategy | Approach + tone + avoidance + selfCritique. Updated every 5 turns. |
+| SilenceIntelligence | 3-way decision: RESPOND / SILENT / WAIT_THEN_RESPOND. |
+| ZdpLevel | Zone of Proximal Development. canDoAlone / canDoWithPrompt / cannotDo. |
+| challengeSuccessRate | 70% target. Calibrates question difficulty. |
+| backgroundModel | gpt-4o-mini. Used by TheAnalyst + TheStrategist. |
+| interviewerModel | gpt-4o. Used by TheConductor for streaming. |
+| fire-and-forget | Background coroutine on per-session scope. Never blocks response. |
