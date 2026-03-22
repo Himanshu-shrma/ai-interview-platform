@@ -29,12 +29,12 @@ git branch --show-current
 
 | Phase | Tasks | Done | Status |
 |-------|-------|------|--------|
-| 1 — Foundation Brain | 8 | 2 | In progress |
+| 1 — Foundation Brain | 8 | 5 | In progress |
 | 2 — Natural Intelligence | 10 | 0 | Not started |
 | 3 — Scientific Validity | 12 | 0 | Not started |
 | 4 — Advanced Cognition | 8 | 0 | Not started |
 | 5 — Deep Research Fixes | 10 | 0 | Not started |
-| **TOTAL** | **48** | **2** | **4%** |
+| **TOTAL** | **48** | **5** | **10%** |
 
 Minimum for merge to master: Phase 1 + Phase 2 complete.
 
@@ -75,7 +75,7 @@ Methods: `initBrain()`, `getBrain()`, `getBrainWithFallback()`, `updateBrain()` 
 
 ---
 
-### TASK-003 [N] XL — ObjectivesRegistry — All Interview Types
+### TASK-003 [D] XL — ObjectivesRegistry — All Interview Types
 **Requires:** TASK-001
 **Replaces:** Stage machine as behavioral controller
 **File:** `conversation/objectives/ObjectivesRegistry.kt` (rewrite existing)
@@ -90,7 +90,7 @@ Also implement `computeInterviewState()` returning `InterviewState` with bloomsL
 
 ---
 
-### TASK-004 [N] L — KnowledgeAdjacencyMap
+### TASK-004 [D] L — KnowledgeAdjacencyMap
 **Requires:** TASK-001
 **File:** `conversation/knowledge/KnowledgeAdjacencyMap.kt`
 
@@ -98,7 +98,7 @@ Maps known topics to adjacent unknowns for predictive probing. 8+ topic groups: 
 
 ---
 
-### TASK-005 [N] L — FlowGuard (Rewrite)
+### TASK-005 [D] L — FlowGuard (Rewrite)
 **Requires:** TASK-001, TASK-003
 **Replaces:** Current FlowGuard
 **File:** `conversation/objectives/FlowGuard.kt` (rewrite existing)
