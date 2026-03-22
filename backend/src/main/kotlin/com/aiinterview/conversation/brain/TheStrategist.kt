@@ -42,8 +42,16 @@ class TheStrategist(
                 .removePrefix("```json").removePrefix("```")
                 .removeSuffix("```").trim()
 
-            val strategy = parseStrategy(cleaned, brain)
+            val node = objectMapper.readTree(cleaned)
+            val strategy = parseStrategy(node, brain)
             brainService.updateStrategy(sessionId, strategy)
+
+            // Abandon stale hypotheses
+            val toAbandon = node.get("hypothesesToAbandon")?.map { it.asText() } ?: emptyList()
+            toAbandon.forEach { id ->
+                brainService.updateHypothesis(sessionId, id, HypothesisStatus.ABANDONED, "Abandoned by strategist after 10+ turns")
+            }
+
             log.info("TheStrategist updated strategy for session={} at turn={}", sessionId, brain.turnCount)
         } catch (e: Exception) {
             log.warn("TheStrategist failed silently for session={}: {}", sessionId, e.message)
@@ -88,15 +96,16 @@ Return ONLY valid JSON:
   "timeGuidance": "how to allocate remaining time",
   "avoidance": "one thing to STOP doing immediately",
   "recommendedTokens": 100,
-  "selfCritique": "honest assessment of what went wrong (1-2 sentences)"
+  "selfCritique": "honest assessment of what went wrong (1-2 sentences)",
+  "hypothesesToAbandon": []
 }
 
 recommendedTokens: STRONG+flowing=80, STRUGGLING+overloaded=130, default=100. Range: 60-180.
+hypothesesToAbandon: list hypothesis IDs that have been OPEN 10+ turns without being tested. Keeps hypothesis list fresh.
         """.trimIndent()
     }
 
-    private fun parseStrategy(json: String, brain: InterviewerBrain): InterviewStrategy = try {
-        val node = objectMapper.readTree(json)
+    private fun parseStrategy(node: com.fasterxml.jackson.databind.JsonNode, brain: InterviewerBrain): InterviewStrategy = try {
         InterviewStrategy(
             approach = node.get("approach")?.asText() ?: "",
             toneGuidance = node.get("toneGuidance")?.asText() ?: "",

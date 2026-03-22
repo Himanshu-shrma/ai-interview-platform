@@ -30,11 +30,11 @@ git branch --show-current
 | Phase | Tasks | Done | Status |
 |-------|-------|------|--------|
 | 1 — Foundation Brain | 8 | 8 | COMPLETE |
-| 2 — Natural Intelligence | 10 | 0 | Not started |
+| 2 — Natural Intelligence | 10 | 10 | COMPLETE |
 | 3 — Scientific Validity | 12 | 0 | Not started |
 | 4 — Advanced Cognition | 8 | 0 | Not started |
 | 5 — Deep Research Fixes | 10 | 0 | Not started |
-| **TOTAL** | **48** | **8** | **17%** |
+| **TOTAL** | **48** | **18** | **38%** |
 
 Minimum for merge to master: Phase 1 + Phase 2 complete.
 
@@ -140,43 +140,43 @@ TheConductor: SilenceIntelligence (RESPOND/SILENT/WAIT_THEN_RESPOND). Feature fl
 ## PHASE 2 — Natural Intelligence
 > Phase 1 must be complete. Within this phase: tasks can be in any order.
 
-### TASK-009 [N] L — Thought Thread Quality + Compression
+### TASK-009 [D] L — Thought Thread Quality + Compression
 **Requires:** TASK-006, TASK-002
 When > 600 chars, compress oldest 200 to 50-char summary via backgroundModel.
 
-### TASK-010 [N] L — Claim Registry + Contradiction Detection
+### TASK-010 [D] L — Claim Registry + Contradiction Detection
 **Requires:** TASK-006
 Verify claim extraction. Add contradiction surfacing to NaturalPromptBuilder. Surfaced exactly once per pair.
 
-### TASK-011 [N] L — Hypothesis Testing Loop End-to-End
+### TASK-011 [D] L — Hypothesis Testing Loop End-to-End
 **Requires:** TASK-004, TASK-006, TASK-008
 Full loop: form -> queue -> test -> confirm/refute. Max 5 open. KnowledgeAdjacencyMap auto-hypothesis.
 
-### TASK-012 [N] L — Silence Intelligence
+### TASK-012 [D] L — Silence Intelligence
 **Requires:** TASK-008
 Three decisions: RESPOND / SILENT / WAIT_THEN_RESPOND. Silent when coding without text. Wait 3s on approach with no action. Always respond to questions/help/done.
 
-### TASK-013 [N] L — Adaptive Personality Engine
+### TASK-013 [D] L — Adaptive Personality Engine
 **Requires:** TASK-006, TASK-008
 Dynamic tone from CandidateProfile. STRONG->challenge. STRUGGLING->patient. Anxiety->slow down. Flow->deepen. Safety<0.4->restore.
 
-### TASK-014 [N] L — "I Don't Know" Protocol
+### TASK-014 [D] L — "I Don't Know" Protocol
 **Requires:** TASK-008
 PRODUCTIVE_UNKNOWN action. Never give answer. Ask how they'd figure it out. Track unknownHandlingPattern: REASONS_FROM_PRINCIPLES / ADMITS_AND_STOPS / PANICS / GUESSES_BLINDLY.
 
-### TASK-015 [N] L — Mental Simulation Testing
+### TASK-015 [D] L — Mental Simulation Testing
 **Requires:** TASK-003, TASK-008
 MENTAL_SIMULATION action after code written. Trace code with specific input, no running. Track abstractionLevel.
 
-### TASK-016 [N] L — Bloom's Taxonomy Tracking
+### TASK-016 [D] L — Bloom's Taxonomy Tracking
 **Requires:** TASK-001, TASK-006, TASK-008
 bloomsTracker: Map<String, Int>. TheAnalyst outputs bloomsLevelReached per topic. EvaluationAgent uses for depth scoring.
 
-### TASK-017 [N] M — Natural Imperfection Injection
+### TASK-017 [D] M — Natural Imperfection Injection
 **Requires:** TASK-008
 13+ acknowledgment variants. usedAcknowledgments in brain. Never repeat same phrase. Occasional rephrase (max 2x).
 
-### TASK-018 [N] M — Wire Phase 1+2 into ConversationEngine
+### TASK-018 [D] M — Wire Phase 1+2 into ConversationEngine
 **Requires:** TASK-001 through TASK-017
 Feature flag: `interview.use-new-brain`. Old agents kept as dead code. Background: TheAnalyst + TheStrategist + FlowGuard. EvaluationAgent receives InterviewerBrain.
 

@@ -1,5 +1,13 @@
 package com.aiinterview.conversation
 
+import com.aiinterview.conversation.brain.BrainFlowGuard
+import com.aiinterview.conversation.brain.BrainObjectivesRegistry
+import com.aiinterview.conversation.brain.BrainService
+import com.aiinterview.conversation.brain.InterviewQuestion
+import com.aiinterview.conversation.brain.TheAnalyst
+import com.aiinterview.conversation.brain.TheConductor
+import com.aiinterview.conversation.brain.TheStrategist
+import com.aiinterview.conversation.brain.computeBrainInterviewState
 import com.aiinterview.conversation.objectives.FlowGuard
 import com.aiinterview.conversation.objectives.ObjectiveTracker
 import com.aiinterview.conversation.objectives.ObjectivesRegistry
@@ -60,6 +68,12 @@ class ConversationEngine(
     private val objectiveTracker: ObjectiveTracker,
     private val flowGuard: FlowGuard,
     private val candidateModelUpdater: CandidateModelUpdater,
+    // Brain system (Phase 1+2)
+    private val brainService: BrainService,
+    private val theConductor: TheConductor,
+    private val theAnalyst: TheAnalyst,
+    private val theStrategist: TheStrategist,
+    private val brainFlowGuard: BrainFlowGuard,
 ) {
     private val log = LoggerFactory.getLogger(ConversationEngine::class.java)
 
@@ -92,6 +106,17 @@ class ConversationEngine(
      * 5. Launch background AgentOrchestrator.analyze() (fire-and-forget)
      */
     suspend fun handleCandidateMessage(sessionId: UUID, content: String) {
+        // ── Brain path (feature flag) ──
+        if (theConductor.useNewBrain) {
+            val brain = brainService.getBrainOrNull(sessionId)
+            if (brain != null) {
+                handleWithBrain(sessionId, content, brain)
+                return
+            }
+            log.warn("Brain missing for session {} — falling back to old system", sessionId)
+        }
+
+        // ── Legacy path (existing behavior, unchanged) ──
         val memory = try {
             redisMemoryService.getMemory(sessionId)
         } catch (e: Exception) {
@@ -206,6 +231,29 @@ class ConversationEngine(
         registry.sendMessage(sessionId, OutboundMessage.AiChunk(delta = openingMessage, done = false))
         registry.sendMessage(sessionId, OutboundMessage.AiChunk(delta = "", done = true))
 
+        // Initialize brain if feature flag is on
+        if (theConductor.useNewBrain) {
+            try {
+                val q = memory.currentQuestion
+                val question = InterviewQuestion(
+                    questionId = q?.id?.toString() ?: "",
+                    title = q?.title ?: "", description = q?.description ?: "",
+                    optimalApproach = q?.optimalApproach ?: "",
+                    difficulty = q?.difficulty ?: "MEDIUM", category = memory.category,
+                )
+                val goals = BrainObjectivesRegistry.forCategory(memory.category)
+                brainService.initBrain(
+                    sessionId = sessionId, userId = memory.userId,
+                    interviewType = memory.category, question = question, goals = goals,
+                    personality = memory.personality, targetCompany = memory.targetCompany,
+                    experienceLevel = memory.experienceLevel, programmingLanguage = memory.programmingLanguage,
+                )
+                log.info("Brain initialized for session {}", sessionId)
+            } catch (e: Exception) {
+                log.warn("Brain init failed for {}, will use old system: {}", sessionId, e.message)
+            }
+        }
+
         redisMemoryService.appendTranscriptTurn(sessionId, "AI", openingMessage)
         try {
             withContext(Dispatchers.IO) {
@@ -234,6 +282,8 @@ class ConversationEngine(
             } catch (e: Exception) {
                 log.error("Report generation failed for force-ended session {}: {}", sessionId, e.message)
             } finally {
+                // Clean up brain if it exists
+                try { brainService.deleteBrain(sessionId) } catch (_: Exception) {}
                 cancelSessionScope(sessionId)
             }
         }
@@ -340,6 +390,69 @@ class ConversationEngine(
         }
 
         log.info("Session {} transitioned to question {} of {}", sessionId, nextIndex + 1, memory.totalQuestions)
+    }
+
+    // ── Brain path ─────────────────────────────────────────────────────────
+
+    private suspend fun handleWithBrain(
+        sessionId: UUID,
+        content: String,
+        brain: com.aiinterview.conversation.brain.InterviewerBrain,
+    ) {
+        // Persist candidate message (same as legacy)
+        persistCandidateMessage(sessionId, content)
+        brainService.appendTranscriptTurn(sessionId, "CANDIDATE", content)
+
+        transition(sessionId, InterviewState.CandidateResponding)
+
+        // Compute interview state
+        val remainingMinutes = try {
+            val stateCtx = stateContextBuilder.build(sessionId)
+            stateCtx.remainingMinutes
+        } catch (_: Exception) { 30 }
+
+        val state = computeBrainInterviewState(brain, remainingMinutes)
+
+        // FlowGuard check
+        brainFlowGuard.check(brain, state)?.let { guardAction ->
+            try { brainService.addAction(sessionId, guardAction) } catch (_: Exception) {}
+        }
+
+        // Increment turn count
+        try { brainService.incrementTurnCount(sessionId) } catch (_: Exception) {}
+
+        // Generate response via TheConductor
+        val aiResponse = theConductor.respond(sessionId, content, brain, state)
+
+        transition(sessionId, InterviewState.AiAnalyzing)
+
+        // Fire background tasks
+        val scope = getSessionScope(sessionId)
+
+        scope.launch {
+            try {
+                val freshBrain = brainService.getBrainOrNull(sessionId) ?: return@launch
+                theAnalyst.analyze(sessionId, content, aiResponse, freshBrain)
+            } catch (e: CancellationException) { throw e }
+            catch (e: Exception) { log.warn("TheAnalyst failed for {}: {}", sessionId, e.message) }
+        }
+
+        if ((brain.turnCount + 1) % 5 == 0) {
+            scope.launch {
+                try {
+                    val freshBrain = brainService.getBrainOrNull(sessionId) ?: return@launch
+                    theStrategist.review(sessionId, freshBrain)
+                } catch (e: CancellationException) { throw e }
+                catch (e: Exception) { log.warn("TheStrategist failed for {}: {}", sessionId, e.message) }
+            }
+        }
+
+        // Also run legacy orchestrator for state machine compatibility
+        scope.launch {
+            try { agentOrchestrator.analyzeAndTransition(sessionId, content) }
+            catch (e: CancellationException) { throw e }
+            catch (e: Exception) { log.warn("Legacy orchestrator failed for {}: {}", sessionId, e.message) }
+        }
     }
 
     // ── Private helpers ───────────────────────────────────────────────────────

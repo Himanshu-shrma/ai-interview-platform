@@ -25,6 +25,7 @@ object BrainObjectivesRegistry {
         optional = listOf(
             Goal("optimization_explored", "Further optimization discussed", "Alternative approach or trade-offs discussed", emptyList(), 3, GoalCategory.EVALUATION, 5),
             Goal("follow_up_variant", "A harder related variant introduced", "AI asked a meaningful follow-up question", emptyList(), 3, GoalCategory.EVALUATION, 5),
+            Goal("reach_evaluate_level", "At least 2 topics reached ANALYZE or EVALUATE level", "bloomsTracker has 2+ entries at level 4+", listOf("approach_understood"), 8, GoalCategory.EVALUATION, 4),
         ),
     )
 

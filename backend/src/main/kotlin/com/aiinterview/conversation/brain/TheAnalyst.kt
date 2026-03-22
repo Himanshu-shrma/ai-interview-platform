@@ -125,14 +125,31 @@ RULES:
 - candidateProfileUpdate: null = no change. Be conservative.
 - newHypothesis: only if genuinely new insight. testStrategy must be an OPEN question.
 - hypothesisUpdates: newStatus "confirmed"|"refuted"|null.
-- newClaims: ONLY specific falsifiable technical claims. NOT "it should work".
-- contradictionFound: only if new claim contradicts a PREVIOUS claim above.
+- newClaims: ONLY specific falsifiable technical claims. ALL must be true: (1) technical assertion, (2) specific not vague, (3) falsifiable, (4) 5+ words, (5) said by CANDIDATE. INCLUDE: "BFS has O(V+E) time complexity". EXCLUDE: "it should work", "I think this is correct", "let me think".
+- contradictionFound: only if a new claim CONTRADICTS a previous claim above. Must be genuine technical inconsistency (not a revision). Set claim1 and claim2 to EXACT claim text from recentClaims.
 - goalsCompleted: only if CLEARLY demonstrated this exchange. Be conservative.
-- thoughtThreadAppend: 1-2 sentences. Must reference THIS exchange. Must be forward-looking.
+- thoughtThreadAppend: 1-2 sentences ONLY. MUST reference something specific from THIS exchange. MUST be forward-looking ("next I should..."). MUST NOT be generic ("candidate answered well"). GOOD: "Said BFS without mentioning shortest path — next: probe why BFS specifically?" BAD: "Candidate discussed algorithms."
 - nextAction: type=TEST_HYPOTHESIS|SURFACE_CONTRADICTION|ADVANCE_GOAL|PROBE_DEPTH|REDIRECT|EMOTIONAL_ADJUST|REDUCE_LOAD|PRODUCTIVE_UNKNOWN|MENTAL_SIMULATION
 - exchangeScore: dimension=problem_solving|algorithm|code_quality|communication|efficiency|testing. Score 0.0-10.0.
 - bloomsLevelUpdate: {"topic": level} where level 1-6.
 - adjacentTopicsToProbe: topic IDs candidate just demonstrated.
+
+IDK PROTOCOL:
+If candidate says "i don't know"/"not sure"/"no idea"/"not familiar with":
+  nextAction MUST be: {"type":"PRODUCTIVE_UNKNOWN","description":"Candidate doesn't know [X]. Do NOT give answer. Ask: 'How would you approach figuring this out?' or 'What do you know that might be related?'","priority":1,"expiresInTurns":2}
+
+After a PRODUCTIVE_UNKNOWN was acted on last turn, detect response quality:
+  candidateProfileUpdate.unknownHandlingPattern: "reasons-from-principles"|"admits-and-stops"|"panics"|"guesses-blindly"|null
+
+MENTAL SIMULATION:
+When solution_implemented is newly in goalsCompleted:
+  nextAction MUST be: {"type":"MENTAL_SIMULATION","description":"Code just written. Ask: 'Before we run it — walk me through what happens if I pass in [specific non-trivial input]. Step by step.' Then assess abstraction level 1-5.","priority":1,"bloomsLevel":3,"expiresInTurns":3}
+  After simulation, update abstractionLevel: 1=syntax, 2=operation, 3=purpose, 4=algorithm, 5=evaluation.
+
+BLOOM'S LEVELS (for bloomsLevelUpdate):
+  1=REMEMBER (recalls fact), 2=UNDERSTAND (explains concept), 3=APPLY (uses correctly),
+  4=ANALYZE (compares/contrasts), 5=EVALUATE (judges trade-offs), 6=CREATE (designs novel)
+  Format: {"topic_name": level}. Only update if higher than recorded.
         """.trimIndent()
     }
 
@@ -173,19 +190,26 @@ RULES:
                     selfRepairCount = if (u.selfRepairDetected == true) p.selfRepairCount + 1 else p.selfRepairCount,
                     cognitiveLoadSignal = u.cognitiveLoadSignal?.let { safeEnum<CognitiveLoad>(it) } ?: p.cognitiveLoadSignal,
                     avoidancePatterns = u.newAvoidancePattern?.let { p.avoidancePatterns + it } ?: p.avoidancePatterns,
+                    unknownHandlingPattern = u.unknownHandlingPattern?.let { safeEnum<UnknownHandling>(it) } ?: p.unknownHandlingPattern,
                     dataPoints = p.dataPoints + 1,
                 )
             }
         }
 
-        // 2. New hypothesis
+        // 2. New hypothesis + auto-queue TEST_HYPOTHESIS action
         decision.newHypothesis?.let { h ->
+            val hId = "h_${brain.turnCount}_${brain.hypothesisRegistry.hypotheses.size}"
             brainService.addHypothesis(sessionId, Hypothesis(
-                id = "h_${brain.turnCount}_${brain.hypothesisRegistry.hypotheses.size}",
-                claim = h.claim, confidence = h.confidence,
+                id = hId, claim = h.claim, confidence = h.confidence,
                 supportingEvidence = h.evidence, testStrategy = h.testStrategy,
                 priority = h.priority, formedAtTurn = brain.turnCount,
                 bloomsLevel = h.bloomsLevel, status = HypothesisStatus.OPEN,
+            ))
+            brainService.addAction(sessionId, IntendedAction(
+                id = "test_$hId", type = ActionType.TEST_HYPOTHESIS,
+                description = "Test hypothesis: ${h.claim}\nAsk: ${h.testStrategy}",
+                priority = h.priority, expiresAfterTurn = brain.turnCount + 6,
+                source = ActionSource.HYPOTHESIS, bloomsLevel = h.bloomsLevel,
             ))
         }
 
@@ -302,6 +326,7 @@ data class CandidateProfileUpdateDto(
     val psychologicalSafety: Float? = null, val abstractionLevel: Int? = null,
     val selfRepairDetected: Boolean? = null, val cognitiveLoadSignal: String? = null,
     val newAvoidancePattern: String? = null, val dismissalLanguage: Boolean? = null,
+    val unknownHandlingPattern: String? = null,
 )
 
 @JsonIgnoreProperties(ignoreUnknown = true)

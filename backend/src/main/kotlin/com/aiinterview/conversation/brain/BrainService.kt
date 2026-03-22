@@ -100,14 +100,28 @@ class BrainService(
 
     suspend fun appendThought(sessionId: UUID, thought: String) = updateBrain(sessionId) { brain ->
         val ct = brain.thoughtThread
-        val newContent = if (ct.thread.isBlank()) thought else "${ct.thread}\n$thought"
+        val newContent = if (ct.thread.isBlank()) thought else "${ct.thread}\n• $thought"
         val (compressed, active) = if (newContent.length > 600) {
-            val summary = newContent.take(200).take(50)
-            Pair("${ct.compressedHistory}\n[Earlier: $summary]", newContent.drop(200))
+            val toCompress = newContent.take(200)
+            val remaining = newContent.drop(200)
+            val compressedSummary = extractiveCompress(toCompress)
+            val newHistory = if (ct.compressedHistory.isBlank()) compressedSummary
+            else "${ct.compressedHistory} | $compressedSummary"
+            Pair(newHistory.takeLast(300), remaining)
         } else {
             Pair(ct.compressedHistory, newContent)
         }
         brain.copy(thoughtThread = ct.copy(thread = active, compressedHistory = compressed, lastUpdatedTurn = brain.turnCount))
+    }
+
+    /** Extractive compression: first sentence + last sentence. Zero LLM cost. */
+    private fun extractiveCompress(text: String): String {
+        val sentences = text.split(". ", ".\n").map { it.trim() }.filter { it.length > 20 }
+        return when {
+            sentences.isEmpty() -> text.take(50)
+            sentences.size == 1 -> sentences.first().take(80)
+            else -> "${sentences.first().take(50)}... ${sentences.last().take(50)}"
+        }
     }
 
     suspend fun addHypothesis(sessionId: UUID, h: Hypothesis) = updateBrain(sessionId) { brain ->

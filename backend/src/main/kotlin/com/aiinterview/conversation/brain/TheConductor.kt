@@ -138,31 +138,55 @@ class TheConductor(
         if (responseText.isNotBlank()) {
             persistResponse(sessionId, responseText)
             brainService.appendTranscriptTurn(sessionId, "AI", responseText)
+            detectAndTrackAcknowledgment(sessionId, responseText)
+
+            // Mark contradiction as surfaced if one was in the prompt
+            if (brain.turnCount >= 5) {
+                brain.claimRegistry.pendingContradictions
+                    .filter { !it.surfaced }.minByOrNull { it.priority }
+                    ?.let { c ->
+                        try { brainService.markContradictionSurfaced(sessionId, c.claim1Id, c.claim2Id) } catch (_: Exception) {}
+                    }
+            }
         }
         return responseText
     }
 
     private fun shouldRespond(brain: InterviewerBrain, candidateMessage: String, state: InterviewState): SilenceDecision {
-        // Always respond to questions, help requests, done signals
         val lower = candidateMessage.lowercase().trim()
-        if (lower.endsWith("?")) return SilenceDecision.RESPOND
-        if (lower.contains("help") || lower.contains("hint") || lower.contains("stuck")) return SilenceDecision.RESPOND
-        if (lower.contains("done") || lower.contains("finished") || lower.contains("i think this works")) return SilenceDecision.RESPOND
-        if (IDK_SIGNALS.any { lower.contains(it) }) return SilenceDecision.RESPOND
+
+        // BEHAVIORAL interviews: always respond (pure conversation, no coding silence)
+        if (brain.interviewType.uppercase() == "BEHAVIORAL") {
+            return SilenceDecision.RESPOND.also {
+                log.debug("SilenceDecision: RESPOND (BEHAVIORAL) session={} turn={}", brain.sessionId, brain.turnCount)
+            }
+        }
+
+        // Always respond to questions, help requests, done signals, IDK
+        if (lower.endsWith("?")) return logged(SilenceDecision.RESPOND, brain, "question")
+        if (lower.contains("help") || lower.contains("hint") || lower.contains("stuck")) return logged(SilenceDecision.RESPOND, brain, "help")
+        if (lower.contains("done") || lower.contains("finished") || lower.contains("i think this works")) return logged(SilenceDecision.RESPOND, brain, "done")
+        if (IDK_SIGNALS.any { lower.contains(it) }) return logged(SilenceDecision.RESPOND, brain, "idk")
 
         // Always respond to FlowGuard actions
-        if (brain.actionQueue.pending.any { it.source == ActionSource.FLOW_GUARD }) return SilenceDecision.RESPOND
+        if (brain.actionQueue.pending.any { it.source == ActionSource.FLOW_GUARD }) return logged(SilenceDecision.RESPOND, brain, "flowguard")
 
-        // Silent during coding (no text, just code updates)
-        val isCodingPhase = state.currentPhaseLabel == "CODING"
-        if (isCodingPhase && candidateMessage.length < 10) return SilenceDecision.SILENT
+        // Silent during coding (short/empty messages — candidate is typing code)
+        if (state.currentPhaseLabel == "CODING" && candidateMessage.length < 10) return logged(SilenceDecision.SILENT, brain, "coding-short")
 
         // Wait on long approach explanation with no urgent action
         if (state.currentPhaseLabel == "APPROACH" && candidateMessage.length > 200 && brain.actionQueue.pending.isEmpty()) {
-            return SilenceDecision.WAIT_THEN_RESPOND
+            return logged(SilenceDecision.WAIT_THEN_RESPOND, brain, "long-approach")
         }
 
-        return SilenceDecision.RESPOND
+        return logged(SilenceDecision.RESPOND, brain, "default")
+    }
+
+    private fun logged(decision: SilenceDecision, brain: InterviewerBrain, reason: String): SilenceDecision {
+        log.info("SilenceDecision: {} reason={} session={} turn={} phase={}",
+            decision, reason, brain.sessionId, brain.turnCount,
+            brain.interviewGoals.completed.size)
+        return decision
     }
 
     // ── Streaming (identical pattern to InterviewerAgent) ──
@@ -199,6 +223,14 @@ class TheConductor(
         true
     } catch (e: Exception) {
         log.error("TheConductor fallback error for session {}: {}", sessionId, e.message); false
+    }
+
+    /** Detect if response starts with an acknowledgment and track it. */
+    private suspend fun detectAndTrackAcknowledgment(sessionId: UUID, response: String) {
+        val firstWord = response.trim().split(" ", ",", ".").firstOrNull()?.trim() ?: return
+        if (NaturalPromptBuilder.ACKNOWLEDGMENT_POOL.any { it.equals(firstWord, ignoreCase = true) }) {
+            try { brainService.appendUsedAcknowledgment(sessionId, firstWord) } catch (_: Exception) {}
+        }
     }
 
     private suspend fun streamStaticResponse(sessionId: UUID, response: String) {
