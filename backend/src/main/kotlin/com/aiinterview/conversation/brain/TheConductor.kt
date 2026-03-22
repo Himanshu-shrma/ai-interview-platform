@@ -49,6 +49,21 @@ class TheConductor(
             "i don't know", "i'm not sure", "i have no idea",
             "i haven't seen this", "i don't remember", "not familiar with", "no idea",
         )
+        private val CODING_SILENCE_RESPONSES = listOf("Mm.", "Got it.", "Go on.", "Okay.", "Sure.")
+        private val THINKING_PHRASES = listOf(
+            "i'm using", "i am using", "i will", "i'll",
+            "i'm going to", "i'm thinking", "i think i'll",
+            "so i", "now i", "here i", "i'm adding",
+            "i'm creating", "i'm initializing", "i'm checking",
+            "let me", "i need to", "i want to",
+        )
+    }
+
+    private fun isThinkingAloud(message: String): Boolean {
+        val lower = message.lowercase().trim()
+        if (lower.contains("?")) return false
+        if (message.length < 50) return false
+        return THINKING_PHRASES.any { lower.contains(it) }
     }
 
     enum class SilenceDecision { RESPOND, SILENT, WAIT_THEN_RESPOND }
@@ -74,7 +89,8 @@ class TheConductor(
             }
             SilenceDecision.WAIT_THEN_RESPOND -> {
                 kotlinx.coroutines.delay(2000)
-                val msg = getReassurance(brain)
+                val isCodingPhase = state.currentPhaseLabel in setOf("CODING", "APPROACH")
+                val msg = if (isCodingPhase) CODING_SILENCE_RESPONSES.random() else getReassurance(brain)
                 streamStaticResponse(sessionId, msg)
                 persistResponse(sessionId, msg)
                 msg
@@ -93,7 +109,7 @@ class TheConductor(
     ): String {
         // CODING GATE — only for coding types
         val isCodingInterview = brain.interviewType.uppercase() in setOf("CODING", "DSA")
-        val hasMeaningfulCode = brain.currentCode?.trim()?.let { it.length > 50 && it.lines().count { l -> l.isNotBlank() } > 3 } ?: false
+        val hasMeaningfulCode = isMeaningfulCode(brain.currentCode)
 
         if (isCodingInterview && state.currentPhaseLabel == "CODING" && !hasMeaningfulCode) {
             val msgLower = candidateMessage.lowercase()
@@ -170,12 +186,24 @@ class TheConductor(
         // Always respond to FlowGuard actions
         if (brain.actionQueue.pending.any { it.source == ActionSource.FLOW_GUARD }) return logged(SilenceDecision.RESPOND, brain, "flowguard")
 
-        // Silent during coding (short/empty messages — candidate is typing code)
-        if (state.currentPhaseLabel == "CODING" && candidateMessage.length < 10) return logged(SilenceDecision.SILENT, brain, "coding-short")
-
-        // Wait on long approach explanation with no urgent action
-        if (state.currentPhaseLabel == "APPROACH" && candidateMessage.length > 200 && brain.actionQueue.pending.isEmpty()) {
-            return logged(SilenceDecision.WAIT_THEN_RESPOND, brain, "long-approach")
+        // CODING/APPROACH phase: conservative responses
+        if (state.currentPhaseLabel in setOf("CODING", "APPROACH")) {
+            // Thinking aloud while coding: short acknowledgment after delay
+            if (isThinkingAloud(candidateMessage)) {
+                return logged(SilenceDecision.WAIT_THEN_RESPOND, brain, "thinking-aloud")
+            }
+            // Very short message (1-5 words) during coding: quick update, respond
+            if (state.currentPhaseLabel == "CODING" && candidateMessage.split(" ").size <= 5) {
+                return logged(SilenceDecision.RESPOND, brain, "coding-short-update")
+            }
+            // Short code-only message (< 10 chars): silent
+            if (state.currentPhaseLabel == "CODING" && candidateMessage.length < 10) {
+                return logged(SilenceDecision.SILENT, brain, "coding-short")
+            }
+            // Long message without question: thinking aloud
+            if (candidateMessage.length > 100 && !candidateMessage.contains("?")) {
+                return logged(SilenceDecision.WAIT_THEN_RESPOND, brain, "long-no-question")
+            }
         }
 
         return logged(SilenceDecision.RESPOND, brain, "default")
@@ -222,6 +250,25 @@ class TheConductor(
         true
     } catch (e: Exception) {
         log.error("TheConductor fallback error for session {}: {}", sessionId, e.message); false
+    }
+
+    /** Detects real code vs pseudo code / comments / skeleton. */
+    private fun isMeaningfulCode(code: String?): Boolean {
+        if (code.isNullOrBlank()) return false
+        val lines = code.lines().map { it.trim() }.filter { it.isNotBlank() }
+        if (lines.size < 3) return false
+        val commentLines = lines.count {
+            it.startsWith("//") || it.startsWith("#") || it.startsWith("/*") || it.startsWith("*")
+        }
+        val realCodeLines = lines.size - commentLines
+        if (realCodeLines < 3) return false
+        // >70% comments = pseudo code
+        if (commentLines > 0 && commentLines.toFloat() / lines.size > 0.7f) return false
+        // Must have executable patterns
+        val execPatterns = listOf("=", "(", "if ", "for ", "while ", "return ", "new ", ".add", ".get", ".put")
+        val hasExecutable = lines.filter { !it.startsWith("//") && !it.startsWith("#") }
+            .any { line -> execPatterns.any { line.contains(it) } }
+        return hasExecutable
     }
 
     private fun getReassurance(brain: InterviewerBrain): String = when (brain.interviewType.uppercase()) {

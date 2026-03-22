@@ -171,6 +171,21 @@ ZDP DETECTION:
 QUESTION TYPE CLASSIFICATION:
   questionType: classify the AI's question: "assumption"|"implication"|"clarifying"|"evidence"|"viewpoint"|"unknown".
   Target distribution: assumption=40%, implication=25%, clarifying=20%, evidence=10%, viewpoint=5%.
+
+CANDIDATE MESSAGE INTENT:
+  candidateIntent: one of:
+  "THINKING_ALOUD" — explaining what they're doing without asking (no question mark, uses "I'm doing", "let me", etc.)
+  "ASKING_QUESTION" — has "?" or asks for help/clarification
+  "SIGNALING_DONE" — says "done", "finished", "I've completed", "submitted", "written the code"
+  "EXPLAINING_APPROACH" — discussing algorithm/strategy before coding
+  "EXPLAINING_CODE" — walking through written code after coding
+  "REQUESTING_HINT" — asks for hint/help explicitly
+
+PSEUDO CODE DETECTION:
+  When evaluating if solution_implemented is complete:
+  A solution is NOT complete if code is mostly comments (// or #), has no executable statements, is only skeleton/outline, or has TODO markers.
+  A solution IS complete if it has actual executable logic, real data structure operations, and actual loops/conditions/method calls.
+  Do NOT mark solution_implemented complete for pseudo code.
         """.trimIndent()
     }
 
@@ -384,7 +399,20 @@ QUESTION TYPE CLASSIFICATION:
             }
         }
 
-        // 18. STAR ownership probe (TASK-033)
+        // 18. Candidate intent handling
+        when (decision.candidateIntent?.uppercase()) {
+            "SIGNALING_DONE" -> {
+                brainService.addAction(sessionId, IntendedAction(
+                    id = "done_signal_${brain.turnCount}", type = ActionType.ADVANCE_GOAL,
+                    description = "Candidate signaled done. Move to code review: ask them to walk through their solution.",
+                    priority = 1, expiresAfterTurn = brain.turnCount + 2, source = ActionSource.ANALYST,
+                ))
+            }
+            "THINKING_ALOUD" -> { /* No action — don't interrupt */ }
+            else -> { /* Default handling via other mechanisms */ }
+        }
+
+        // 19. STAR ownership probe (TASK-033)
         if (decision.ownershipProbeNeeded && brain.interviewType.uppercase() == "BEHAVIORAL") {
             brainService.addAction(sessionId, IntendedAction(
                 id = "ownership_${brain.turnCount}", type = ActionType.PROBE_DEPTH,
@@ -428,6 +456,7 @@ data class AnalystDecision(
     val ownershipProbeNeeded: Boolean = false,
     val zdpUpdate: ZdpUpdateDto? = null,
     val questionType: String? = null,
+    val candidateIntent: String? = null,
 )
 
 @JsonIgnoreProperties(ignoreUnknown = true)
