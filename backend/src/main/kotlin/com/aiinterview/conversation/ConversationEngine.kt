@@ -359,10 +359,15 @@ class ConversationEngine(
         val session = withContext(Dispatchers.IO) {
             sessionRepository.findById(sessionId).awaitSingleOrNull()
         }
+        val durationMinutes = session?.config?.let { configJson ->
+            try {
+                objectMapper.readValue(configJson, com.aiinterview.interview.service.InterviewConfig::class.java).durationMinutes
+            } catch (_: Exception) { 45 }
+        } ?: 45
         val started = session?.startedAt?.toInstant()
         if (started != null) {
             val elapsed = Duration.between(started, Instant.now()).toMinutes()
-            (45 - elapsed).toInt().coerceAtLeast(0)
+            (durationMinutes - elapsed).toInt().coerceAtLeast(0)
         } else 30
     } catch (_: Exception) { 30 }
 

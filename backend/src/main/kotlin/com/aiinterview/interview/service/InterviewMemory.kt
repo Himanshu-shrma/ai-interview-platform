@@ -33,13 +33,19 @@ data class InterviewMemory(
     val edgeCasesCovered: Int = 0,
     val agentNotes: String = "",
     val lastTestResult: TestResultCache? = null,
-    // Objectives tracking
+    // Legacy fields — kept for Redis backward compatibility.
+    // Brain system uses InterviewerBrain instead.
+    @Deprecated("Use InterviewerBrain.interviewGoals.completed", level = DeprecationLevel.WARNING)
     val completedObjectives: List<String> = emptyList(),
+    @Deprecated("Use InterviewerBrain state tracking", level = DeprecationLevel.WARNING)
     val stalledObjectiveId: String? = null,
+    @Deprecated("Use InterviewerBrain state tracking", level = DeprecationLevel.WARNING)
     val stalledTurnCount: Int = 0,
+    @Deprecated("Use InterviewerBrain.turnCount", level = DeprecationLevel.WARNING)
     val turnCount: Int = 0,
+    @Deprecated("Use InterviewerBrain.actionQueue", level = DeprecationLevel.WARNING)
     val pendingProbe: String? = null,
-    // Candidate mental model
+    @Deprecated("Use InterviewerBrain.candidateProfile", level = DeprecationLevel.WARNING)
     val candidateModel: CandidateModel = CandidateModel(),
     val createdAt: Instant = Instant.now(),
     val lastActivityAt: Instant = Instant.now(),
