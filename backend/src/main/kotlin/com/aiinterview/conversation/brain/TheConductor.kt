@@ -135,7 +135,7 @@ class TheConductor(
 
         // Consume top action after it's in the prompt
         brain.actionQueue.topAction()?.let {
-            try { brainService.completeTopAction(sessionId) } catch (_: Exception) {}
+            try { brainService.completeTopAction(sessionId) } catch (e: Exception) { log.warn("Failed to complete top action for session={}: {}", sessionId, e.message) }
         }
 
         // Stream using interviewerModel (same as InterviewerAgent)
@@ -165,7 +165,7 @@ class TheConductor(
                 brain.claimRegistry.pendingContradictions
                     .filter { !it.surfaced }.minByOrNull { it.priority }
                     ?.let { c ->
-                        try { brainService.markContradictionSurfaced(sessionId, c.claim1Id, c.claim2Id) } catch (_: Exception) {}
+                        try { brainService.markContradictionSurfaced(sessionId, c.claim1Id, c.claim2Id) } catch (e: Exception) { log.warn("Failed to mark contradiction surfaced for session={}: {}", sessionId, e.message) }
                     }
             }
         }
@@ -287,7 +287,7 @@ class TheConductor(
     private suspend fun detectAndTrackAcknowledgment(sessionId: UUID, response: String) {
         val firstWord = response.trim().split(" ", ",", ".").firstOrNull()?.trim() ?: return
         if (NaturalPromptBuilder.ACKNOWLEDGMENT_POOL.any { it.equals(firstWord, ignoreCase = true) }) {
-            try { brainService.appendUsedAcknowledgment(sessionId, firstWord) } catch (_: Exception) {}
+            try { brainService.appendUsedAcknowledgment(sessionId, firstWord) } catch (e: Exception) { log.warn("Failed to track acknowledgment for session={}: {}", sessionId, e.message) }
         }
     }
 

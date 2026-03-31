@@ -329,7 +329,7 @@ class InterviewWebSocketHandler(
                     mem.copy(currentCode = msg.code, programmingLanguage = msg.language)
                 }
                 // Sync code to brain for AI code awareness
-                try { brainService.updateBrain(sessionId) { b -> b.copy(currentCode = msg.code, programmingLanguage = msg.language) } } catch (_: Exception) {}
+                try { brainService.updateBrain(sessionId) { b -> b.copy(currentCode = msg.code, programmingLanguage = msg.language) } } catch (e: Exception) { log.warn("Failed to sync code to brain for session={}: {}", sessionId, e.message) }
             }
 
             "REQUEST_HINT" -> {
