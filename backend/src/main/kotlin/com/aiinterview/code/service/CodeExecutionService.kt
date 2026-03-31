@@ -196,6 +196,7 @@ class CodeExecutionService(
                     expiresAfterTurn = brain.turnCount + 3,
                     source = ActionSource.ANALYST,
                 ))
+                log.info("Test failure probe queued: {}/{} failed for session={}", total - passed, total, sessionId)
             } else if (allPassed && total > 0) {
                 brainService.addAction(sessionId, IntendedAction(
                     id = "tests_pass_${brain.turnCount}",
@@ -206,6 +207,7 @@ class CodeExecutionService(
                     expiresAfterTurn = brain.turnCount + 3,
                     source = ActionSource.ANALYST,
                 ))
+                log.info("All tests passed action queued for session={}", sessionId)
             }
         }
 
