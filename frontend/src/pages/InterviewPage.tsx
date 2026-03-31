@@ -352,6 +352,8 @@ export default function InterviewPage() {
   const isEnded = currentState === 'EVALUATING' || currentState === 'INTERVIEW_END' || !!reportId
   const isEvaluating = currentState === 'EVALUATING' && !reportId
   const isBehavioral = session?.category === 'BEHAVIORAL'
+  const isCoding = session?.category === 'CODING' || session?.category === 'DSA'
+
   const headerTitle = session?.category
     ? `${session.category.charAt(0) + session.category.slice(1).toLowerCase().replace('_', ' ')} Interview`
     : 'Interview Session'
@@ -431,7 +433,7 @@ export default function InterviewPage() {
       {/* Main content */}
       <div className="flex flex-1 min-h-0">
         {/* Conversation panel */}
-        <div className={`flex flex-col border-r ${showCodeEditor ? 'w-1/2 lg:w-2/5' : 'w-full max-w-3xl mx-auto'}`}>
+        <div className={`flex flex-col ${isBehavioral ? 'w-full max-w-3xl mx-auto' : showCodeEditor ? 'w-1/2 lg:w-2/5 border-r' : 'w-full max-w-3xl mx-auto'}`}>
           {/* Hint panel */}
           {hintState && (
             <div className="px-4 pt-3">
@@ -465,6 +467,7 @@ export default function InterviewPage() {
                   onRun={handleCodeRun}
                   onSubmit={handleCodeSubmit}
                   isRunning={isCodeRunning}
+                  showRunSubmit={isCoding}
                 />
               </Suspense>
             </div>
