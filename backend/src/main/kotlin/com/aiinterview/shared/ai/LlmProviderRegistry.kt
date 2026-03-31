@@ -1,5 +1,6 @@
 package com.aiinterview.shared.ai
 
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
 import org.slf4j.LoggerFactory
@@ -11,6 +12,8 @@ class LlmProviderRegistry(
     private val providers: List<LlmProvider>,
     @Value("\${llm.provider}") private val primaryProviderName: String,
     @Value("\${llm.fallback-provider:#{null}}") private val fallbackProviderName: String?,
+    @Value("\${llm.retry.max-attempts:3}") private val maxRetryAttempts: Int = 3,
+    @Value("\${llm.retry.initial-delay-ms:1000}") private val initialDelayMs: Long = 1000L,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -29,15 +32,22 @@ class LlmProviderRegistry(
     }
 
     suspend fun complete(request: LlmRequest): LlmResponse = try {
-        primaryProvider.complete(request)
+        retryWithBackoff("complete") {
+            primaryProvider.complete(request)
+        }
     } catch (e: LlmProviderException.RateLimitException) {
-        log.warn("Primary provider {} rate limited, trying fallback", primaryProviderName)
+        log.warn("Primary provider {} rate limited after retries, trying fallback", primaryProviderName)
         fallbackProvider?.complete(request) ?: throw e
     } catch (e: LlmProviderException.ProviderUnavailableException) {
-        log.warn("Primary provider {} unavailable, trying fallback", primaryProviderName)
+        log.warn("Primary provider {} unavailable after retries, trying fallback", primaryProviderName)
         fallbackProvider?.complete(request) ?: throw e
     }
 
+    /**
+     * Streaming is NOT retried — a mid-stream retry would send duplicate tokens.
+     * Stream failures are handled by TheConductor's tryFallback() mechanism which
+     * falls back to complete() (which does retry).
+     */
     fun stream(request: LlmRequest): Flow<String> =
         primaryProvider.stream(request)
             .catch { e ->
@@ -50,4 +60,35 @@ class LlmProviderRegistry(
 
     fun primary(): LlmProvider = primaryProvider
     fun getProviderName(): String = primaryProviderName
+
+    // ── Retry with exponential backoff ──────────────────────────────────────
+
+    private suspend fun <T> retryWithBackoff(
+        operationName: String,
+        block: suspend () -> T,
+    ): T {
+        repeat(maxRetryAttempts) { attempt ->
+            try {
+                return block()
+            } catch (e: Exception) {
+                val isRetryable = isRetryableError(e)
+                val isLastAttempt = attempt == maxRetryAttempts - 1
+                if (!isRetryable || isLastAttempt) throw e
+                val delayMs = initialDelayMs * (1L shl attempt) // 1s, 2s, 4s
+                log.warn("LLM {} failed (attempt {}/{}), retrying in {}ms: {}",
+                    operationName, attempt + 1, maxRetryAttempts, delayMs, e.message)
+                delay(delayMs)
+            }
+        }
+        error("unreachable")
+    }
+
+    private fun isRetryableError(e: Exception): Boolean {
+        if (e is LlmProviderException.RateLimitException) return true
+        if (e is LlmProviderException.ProviderUnavailableException) return true
+        val msg = e.message?.lowercase() ?: return false
+        return msg.contains("429") || msg.contains("rate limit") ||
+            msg.contains("timeout") || msg.contains("502") ||
+            msg.contains("503") || msg.contains("overloaded")
+    }
 }
