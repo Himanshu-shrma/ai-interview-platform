@@ -46,14 +46,16 @@ class ReportService(
 ) {
     private val log = LoggerFactory.getLogger(ReportService::class.java)
 
-    // ── Weight constants for overall score ────────────────────────────────────
+    // ── Weight constants for overall score (8 dimensions, sum = 1.0) ────────
     companion object {
-        private const val W_PROBLEM_SOLVING  = 0.25
-        private const val W_ALGORITHM_CHOICE = 0.20
-        private const val W_CODE_QUALITY     = 0.20
+        private const val W_PROBLEM_SOLVING  = 0.20
+        private const val W_ALGORITHM_CHOICE = 0.15
+        private const val W_CODE_QUALITY     = 0.15
         private const val W_COMMUNICATION    = 0.15
         private const val W_EFFICIENCY       = 0.10
         private const val W_TESTING          = 0.10
+        private const val W_INITIATIVE       = 0.10
+        private const val W_LEARNING_AGILITY = 0.05
     }
 
     /**
@@ -98,7 +100,7 @@ class ReportService(
         // 3. Call EvaluationAgent (returns both text feedback AND numeric scores)
         val evalResult = evaluationAgent.evaluate(memory)
 
-        // 4. Compute weighted overall score from LLM-generated scores
+        // 4. Compute weighted overall score from LLM-generated scores (8 dimensions)
         val s = evalResult.scores
         val overallScore = (
             s.problemSolving  * W_PROBLEM_SOLVING  +
@@ -106,8 +108,14 @@ class ReportService(
             s.codeQuality     * W_CODE_QUALITY     +
             s.communication   * W_COMMUNICATION   +
             s.efficiency      * W_EFFICIENCY       +
-            s.testing         * W_TESTING
+            s.testing         * W_TESTING          +
+            s.initiative      * W_INITIATIVE       +
+            s.learningAgility * W_LEARNING_AGILITY
         ).coerceIn(0.0, 10.0)
+
+        log.info("Score formula session={}: ps={} algo={} code={} comm={} eff={} test={} init={} la={} → overall={}",
+            sessionId, s.problemSolving, s.algorithmChoice, s.codeQuality, s.communication,
+            s.efficiency, s.testing, s.initiative, s.learningAgility, overallScore)
 
         // 5. Serialise JSONB fields
         val strengthsJson         = objectMapper.writeValueAsString(evalResult.strengths)
@@ -132,6 +140,8 @@ class ReportService(
                     communicationScore   = BigDecimal(s.communication).setScale(2, RoundingMode.HALF_UP),
                     efficiencyScore      = BigDecimal(s.efficiency).setScale(2, RoundingMode.HALF_UP),
                     testingScore         = BigDecimal(s.testing).setScale(2, RoundingMode.HALF_UP),
+                    initiativeScore      = BigDecimal(s.initiative).setScale(2, RoundingMode.HALF_UP),
+                    learningAgilityScore = BigDecimal(s.learningAgility).setScale(2, RoundingMode.HALF_UP),
                     strengths            = strengthsJson,
                     weaknesses           = weaknessesJson,
                     suggestions          = suggestionsJson,

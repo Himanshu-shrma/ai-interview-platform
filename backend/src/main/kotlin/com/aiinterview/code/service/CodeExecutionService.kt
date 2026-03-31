@@ -7,6 +7,10 @@ import com.aiinterview.code.model.CodeSubmission
 import com.aiinterview.code.repository.CodeSubmissionRepository
 import com.aiinterview.conversation.ConversationEngine
 import com.aiinterview.conversation.InterviewState
+import com.aiinterview.conversation.brain.ActionSource
+import com.aiinterview.conversation.brain.ActionType
+import com.aiinterview.conversation.brain.BrainService
+import com.aiinterview.conversation.brain.IntendedAction
 import com.aiinterview.interview.repository.QuestionRepository
 import com.aiinterview.interview.repository.SessionQuestionRepository
 import com.aiinterview.interview.service.RedisMemoryService
@@ -35,6 +39,7 @@ class CodeExecutionService(
     private val questionRepository: QuestionRepository,
     private val codeSubmissionRepository: CodeSubmissionRepository,
     private val conversationEngine: ConversationEngine,
+    private val brainService: BrainService,
     private val objectMapper: ObjectMapper,
 ) {
     private val log = LoggerFactory.getLogger(CodeExecutionService::class.java)
@@ -87,6 +92,7 @@ class CodeExecutionService(
         language: String,
     ) {
         val languageId = resolveLanguageId(sessionId, language) ?: return
+        log.info("Submit: sessionQuestionId={} session={} language={}", sessionQuestionId, sessionId, language)
 
         // Resolve question for test cases
         val sessionQuestion = withContext(Dispatchers.IO) {
@@ -102,6 +108,7 @@ class CodeExecutionService(
 
         val testCasesJson = question?.testCases
         val testCases     = parseTestCases(testCasesJson)
+        log.info("Submit: question='{}' testCases={} session={}", question?.title, testCases.size, sessionId)
 
         val memory = try { redisMemoryService.getMemory(sessionId) } catch (e: Exception) {
             registry.sendMessage(sessionId, OutboundMessage.Error("SESSION_ERROR", "Session not found"))
@@ -172,6 +179,38 @@ class CodeExecutionService(
 
         log.info("Code submit session={} status={} passed={}/{}", sessionId, status, testResults.count { it.passed }, testResults.size)
 
+        // Queue brain action based on test results
+        val brain = try { brainService.getBrainOrNull(sessionId) } catch (_: Exception) { null }
+        if (brain != null) {
+            val passed = testResults.count { it.passed }
+            val total = testResults.size
+            if (!allPassed && total > 0) {
+                brainService.addAction(sessionId, IntendedAction(
+                    id = "test_fail_${brain.turnCount}",
+                    type = ActionType.PROBE_DEPTH,
+                    description = "Tests FAILING: $passed/$total passed. " +
+                        "Do NOT reveal which tests or the issue. " +
+                        "Ask: 'I see some tests aren't passing — what do you think might be causing that?' " +
+                        "Let them debug. This is highly diagnostic.",
+                    priority = 1,
+                    expiresAfterTurn = brain.turnCount + 3,
+                    source = ActionSource.ANALYST,
+                ))
+                log.info("Test failure probe queued: {}/{} failed for session={}", total - passed, total, sessionId)
+            } else if (allPassed && total > 0) {
+                brainService.addAction(sessionId, IntendedAction(
+                    id = "tests_pass_${brain.turnCount}",
+                    type = ActionType.ADVANCE_GOAL,
+                    description = "All $total tests passing. " +
+                        "Ask: 'All tests pass. What's the time and space complexity of your solution?'",
+                    priority = 2,
+                    expiresAfterTurn = brain.turnCount + 3,
+                    source = ActionSource.ANALYST,
+                ))
+                log.info("All tests passed action queued for session={}", sessionId)
+            }
+        }
+
         // Transition on full pass
         if (allPassed) {
             conversationEngine.transition(sessionId, InterviewState.FollowUp)
@@ -204,7 +243,7 @@ class CodeExecutionService(
             val token  = judge0Client.submit(code, languageId, stdin)
             val result = judge0Client.pollResult(token)
             val actual = result.stdout?.trimEnd()
-            val passed = result.status?.id == 3 && (expected == null || actual?.trimEnd() == expected.trimEnd())
+            val passed = result.status?.id == 3 && (expected == null || outputMatches(actual, expected))
             TestResult(
                 passed    = passed,
                 input     = stdin,
@@ -235,6 +274,25 @@ class CodeExecutionService(
             log.warn("Failed to parse test cases JSON: {}", e.message)
             emptyList()
         }
+    }
+
+    /** Flexible output comparison — handles set/list format differences, whitespace, quotes. */
+    private fun outputMatches(actual: String?, expected: String): Boolean {
+        if (actual == null) return false
+        val a = actual.trim()
+        val e = expected.trim()
+        if (a == e) return true
+        // Normalize: remove brackets, quotes, split, sort, compare
+        val normalize = { s: String ->
+            s.removePrefix("[").removeSuffix("]")
+                .removePrefix("{").removeSuffix("}")
+                .removePrefix("(").removeSuffix(")")
+                .split(Regex("[,\\s]+"))
+                .map { it.trim().trim('"').trim('\'') }
+                .filter { it.isNotBlank() }
+                .sorted()
+        }
+        return normalize(a) == normalize(e)
     }
 
     private fun JsonNode.textOrNull(): String? =

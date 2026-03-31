@@ -27,6 +27,7 @@ interface CodeEditorProps {
   onRun: (code: string, stdin?: string) => void
   onSubmit: (code: string) => void
   isRunning: boolean
+  showRunSubmit?: boolean
 }
 
 export function CodeEditor({
@@ -36,6 +37,7 @@ export function CodeEditor({
   onRun,
   onSubmit,
   isRunning,
+  showRunSubmit = true,
 }: CodeEditorProps) {
   const [showStdin, setShowStdin] = useState(false)
   const [stdin, setStdin] = useState('')
@@ -50,27 +52,32 @@ export function CodeEditor({
           {language}
         </span>
         <div className="flex items-center gap-2">
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => setShowStdin(!showStdin)}
-            className="text-xs"
-          >
-            {showStdin ? 'Hide Input' : 'Custom Input'}
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => onRun(code, stdin || undefined)}
-            disabled={isRunning}
-          >
-            {isRunning ? (
-              <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
-            ) : (
-              <Play className="mr-1 h-3.5 w-3.5" />
-            )}
-            Run
-          </Button>
+          {showRunSubmit && (
+            <>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setShowStdin(!showStdin)}
+                className="text-xs"
+              >
+                {showStdin ? 'Hide Input' : 'Custom Input'}
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => onRun(code, stdin || undefined)}
+                disabled={isRunning}
+              >
+                {isRunning ? (
+                  <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <Play className="mr-1 h-3.5 w-3.5" />
+                )}
+                Run
+              </Button>
+            </>
+          )}
+          {showRunSubmit && (
           <Button
             size="sm"
             onClick={() => onSubmit(code)}
@@ -84,6 +91,7 @@ export function CodeEditor({
             )}
             Submit
           </Button>
+          )}
         </div>
       </div>
 

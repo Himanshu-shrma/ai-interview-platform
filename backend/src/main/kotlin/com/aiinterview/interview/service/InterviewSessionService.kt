@@ -124,6 +124,7 @@ class InterviewSessionService(
 
         val questions = sessionQuestions.map { sq ->
             questionService.getQuestionById(sq.questionId).toCandidateDto(objectMapper)
+                .copy(sessionQuestionId = sq.id)
         }
 
         val report = evaluationReportRepository.findBySessionId(sessionId).awaitSingleOrNull()

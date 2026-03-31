@@ -13,6 +13,7 @@ import java.util.UUID
  */
 data class CandidateQuestionDto(
     val id: UUID?,
+    val sessionQuestionId: UUID? = null,
     val title: String,
     val description: String,
     val category: String,

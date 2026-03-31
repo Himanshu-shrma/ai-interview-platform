@@ -1,0 +1,310 @@
+package com.aiinterview.conversation.brain
+
+import com.aiinterview.interview.model.ConversationMessage
+import com.aiinterview.interview.repository.ConversationMessageRepository
+import com.aiinterview.interview.repository.InterviewSessionRepository
+import com.aiinterview.interview.ws.OutboundMessage
+import com.aiinterview.interview.ws.WsSessionRegistry
+import com.aiinterview.shared.ai.LlmMessage
+import com.aiinterview.shared.ai.LlmProviderRegistry
+import com.aiinterview.shared.ai.LlmRequest
+import com.aiinterview.shared.ai.LlmRole
+import com.aiinterview.shared.ai.ModelConfig
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.reactor.awaitSingle
+import kotlinx.coroutines.reactor.awaitSingleOrNull
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
+import org.slf4j.LoggerFactory
+import org.springframework.stereotype.Component
+import java.time.Duration
+import java.time.Instant
+import java.util.UUID
+
+private const val STREAM_TIMEOUT_MS = 10_000L
+private const val MAX_TOKENS_FALLBACK = 200
+
+/**
+ * The main response generator for the new brain system.
+ * Main response generator using brain architecture.
+ * Uses NaturalPromptBuilder to build brain-driven prompts.
+ * Streams responses via LlmProviderRegistry.
+ */
+@Component
+class TheConductor(
+    private val brainService: BrainService,
+    private val promptBuilder: NaturalPromptBuilder,
+    private val llm: LlmProviderRegistry,
+    private val modelConfig: ModelConfig,
+    private val registry: WsSessionRegistry,
+    private val conversationMessageRepository: ConversationMessageRepository,
+    private val sessionRepository: InterviewSessionRepository,
+) {
+    private val log = LoggerFactory.getLogger(TheConductor::class.java)
+
+    companion object {
+        private val IDK_SIGNALS = listOf(
+            "i don't know", "i'm not sure", "i have no idea",
+            "i haven't seen this", "i don't remember", "not familiar with", "no idea",
+        )
+        private val CODING_SILENCE_RESPONSES = listOf("Mm.", "Got it.", "Go on.", "Okay.", "Sure.")
+        private val THINKING_PHRASES = listOf(
+            "i'm using", "i am using", "i will", "i'll",
+            "i'm going to", "i'm thinking", "i think i'll",
+            "so i", "now i", "here i", "i'm adding",
+            "i'm creating", "i'm initializing", "i'm checking",
+            "let me", "i need to", "i want to",
+        )
+    }
+
+    private fun isThinkingAloud(message: String): Boolean {
+        val lower = message.lowercase().trim()
+        if (lower.contains("?")) return false
+        if (message.length < 50) return false
+        return THINKING_PHRASES.any { lower.contains(it) }
+    }
+
+    enum class SilenceDecision { RESPOND, SILENT, WAIT_THEN_RESPOND }
+
+    /**
+     * Generate AI response using the brain system.
+     * Returns the full response text (for TheAnalyst).
+     * Streaming is identical to InterviewerAgent.
+     */
+    suspend fun respond(
+        sessionId: UUID,
+        candidateMessage: String,
+        brain: InterviewerBrain,
+        state: InterviewState,
+    ): String {
+        // Check silence intelligence
+        val silenceDecision = shouldRespond(brain, candidateMessage, state)
+
+        return when (silenceDecision) {
+            SilenceDecision.SILENT -> {
+                log.debug("TheConductor: SILENT for session={}", sessionId)
+                ""
+            }
+            SilenceDecision.WAIT_THEN_RESPOND -> {
+                kotlinx.coroutines.delay(2000)
+                val isCodingPhase = state.currentPhaseLabel in setOf("CODING", "APPROACH")
+                val msg = if (isCodingPhase) CODING_SILENCE_RESPONSES.random() else getReassurance(brain)
+                streamStaticResponse(sessionId, msg)
+                persistResponse(sessionId, msg)
+                msg
+            }
+            SilenceDecision.RESPOND -> {
+                generateResponse(sessionId, candidateMessage, brain, state)
+            }
+        }
+    }
+
+    private suspend fun generateResponse(
+        sessionId: UUID,
+        candidateMessage: String,
+        brain: InterviewerBrain,
+        state: InterviewState,
+    ): String {
+        // Warn if TheAnalyst appears stuck
+        if (brain.turnCount >= 5 && brain.interviewGoals.completed.isEmpty()) {
+            log.warn("POSSIBLE ANALYST FAILURE: session={} has {} turns but NO goals completed", sessionId, brain.turnCount)
+        }
+
+        // CODING GATE — only for coding types
+        val isCodingInterview = brain.interviewType.uppercase() in setOf("CODING", "DSA")
+        val hasMeaningfulCode = isMeaningfulCode(brain.currentCode)
+
+        if (isCodingInterview && state.currentPhaseLabel == "CODING" && !hasMeaningfulCode) {
+            val msgLower = candidateMessage.lowercase()
+            val canned = when {
+                candidateMessage.length > 150 -> "I think I follow the approach \u2014 go ahead and implement it."
+                msgLower.contains("done") || msgLower.contains("finish") -> "I don't see code yet \u2014 go ahead and implement when ready."
+                else -> "Go ahead \u2014 I'll wait while you code."
+            }
+            streamStaticResponse(sessionId, canned)
+            persistResponse(sessionId, canned)
+            return canned
+        }
+
+        // Build prompt from brain state — include code whenever it exists so AI can reference it
+        val codeContent = if (isCodingInterview && hasMeaningfulCode) brain.currentCode?.take(2000) else null
+        val systemPrompt = promptBuilder.build(brain, state, codeContent)
+        val fullResponse = StringBuilder()
+
+        // Consume top action after it's in the prompt
+        brain.actionQueue.topAction()?.let {
+            try { brainService.completeTopAction(sessionId) } catch (e: Exception) { log.warn("Failed to complete top action for session={}: {}", sessionId, e.message) }
+        }
+
+        // Stream using interviewerModel (same as InterviewerAgent)
+        val maxTokens = brain.currentStrategy.recommendedTokens.coerceIn(60, 200)
+        val success = tryStreaming(sessionId, systemPrompt, candidateMessage, fullResponse, maxTokens)
+
+        if (!success) {
+            log.warn("TheConductor streaming failed for session {}, falling back", sessionId)
+            val ok = tryFallback(sessionId, systemPrompt, candidateMessage, fullResponse)
+            if (!ok) {
+                registry.sendMessage(sessionId, OutboundMessage.Error("AI_ERROR", "Interview assistant unavailable"))
+                return ""
+            }
+        }
+
+        registry.sendMessage(sessionId, OutboundMessage.AiChunk(delta = "", done = true))
+
+        val rawResponse = fullResponse.toString()
+        val responseText = OpenQuestionTransformer.transform(rawResponse)
+        if (responseText.isNotBlank()) {
+            persistResponse(sessionId, responseText)
+            brainService.appendTranscriptTurn(sessionId, "AI", responseText)
+            detectAndTrackAcknowledgment(sessionId, responseText)
+
+            // Mark contradiction as surfaced if one was in the prompt
+            if (brain.turnCount >= 5) {
+                brain.claimRegistry.pendingContradictions
+                    .filter { !it.surfaced }.minByOrNull { it.priority }
+                    ?.let { c ->
+                        try { brainService.markContradictionSurfaced(sessionId, c.claim1Id, c.claim2Id) } catch (e: Exception) { log.warn("Failed to mark contradiction surfaced for session={}: {}", sessionId, e.message) }
+                    }
+            }
+        }
+        return responseText
+    }
+
+    private fun shouldRespond(brain: InterviewerBrain, candidateMessage: String, state: InterviewState): SilenceDecision {
+        val lower = candidateMessage.lowercase().trim()
+
+        // BEHAVIORAL interviews: always respond (pure conversation, no coding silence)
+        if (brain.interviewType.uppercase() == "BEHAVIORAL") {
+            return SilenceDecision.RESPOND.also {
+                log.debug("SilenceDecision: RESPOND (BEHAVIORAL) session={} turn={}", brain.sessionId, brain.turnCount)
+            }
+        }
+
+        // Always respond to questions, help requests, done signals, IDK
+        if (lower.endsWith("?")) return logged(SilenceDecision.RESPOND, brain, "question")
+        if (lower.contains("help") || lower.contains("hint") || lower.contains("stuck")) return logged(SilenceDecision.RESPOND, brain, "help")
+        if (lower.contains("done") || lower.contains("finished") || lower.contains("i think this works")) return logged(SilenceDecision.RESPOND, brain, "done")
+        if (IDK_SIGNALS.any { lower.contains(it) }) return logged(SilenceDecision.RESPOND, brain, "idk")
+
+        // Always respond to FlowGuard actions
+        if (brain.actionQueue.pending.any { it.source == ActionSource.FLOW_GUARD }) return logged(SilenceDecision.RESPOND, brain, "flowguard")
+
+        // CODING/APPROACH phase: conservative responses
+        if (state.currentPhaseLabel in setOf("CODING", "APPROACH")) {
+            // Thinking aloud while coding: short acknowledgment after delay
+            if (isThinkingAloud(candidateMessage)) {
+                return logged(SilenceDecision.WAIT_THEN_RESPOND, brain, "thinking-aloud")
+            }
+            // Very short message (1-5 words) during coding: quick update, respond
+            if (state.currentPhaseLabel == "CODING" && candidateMessage.split(" ").size <= 5) {
+                return logged(SilenceDecision.RESPOND, brain, "coding-short-update")
+            }
+            // Short code-only message (< 10 chars): silent
+            if (state.currentPhaseLabel == "CODING" && candidateMessage.length < 10) {
+                return logged(SilenceDecision.SILENT, brain, "coding-short")
+            }
+            // Long message without question: thinking aloud
+            if (candidateMessage.length > 100 && !candidateMessage.contains("?")) {
+                return logged(SilenceDecision.WAIT_THEN_RESPOND, brain, "long-no-question")
+            }
+        }
+
+        return logged(SilenceDecision.RESPOND, brain, "default")
+    }
+
+    private fun logged(decision: SilenceDecision, brain: InterviewerBrain, reason: String): SilenceDecision {
+        log.info("SilenceDecision: {} reason={} session={} turn={} phase={}",
+            decision, reason, brain.sessionId, brain.turnCount,
+            brain.interviewGoals.completed.size)
+        return decision
+    }
+
+    // ── Streaming (identical pattern to InterviewerAgent) ──
+
+    private suspend fun tryStreaming(
+        sessionId: UUID, systemPrompt: String, userMessage: String, fullResponse: StringBuilder, maxTokens: Int,
+    ): Boolean = try {
+        val request = LlmRequest(
+            messages = listOf(LlmMessage(LlmRole.SYSTEM, systemPrompt), LlmMessage(LlmRole.USER, userMessage)),
+            model = modelConfig.interviewerModel, maxTokens = maxTokens,
+        )
+        withTimeout(STREAM_TIMEOUT_MS) {
+            llm.stream(request)
+                .catch { e -> log.error("Stream error for session {}: {}", sessionId, e.message) }
+                .collect { token ->
+                    fullResponse.append(token)
+                    registry.sendMessage(sessionId, OutboundMessage.AiChunk(delta = token, done = false))
+                }
+        }
+        fullResponse.isNotEmpty()
+    } catch (e: TimeoutCancellationException) {
+        log.warn("TheConductor first-token timeout for session {}", sessionId); false
+    } catch (e: Exception) {
+        log.error("TheConductor streaming error for session {}: {}", sessionId, e.message); false
+    }
+
+    private suspend fun tryFallback(
+        sessionId: UUID, systemPrompt: String, userMessage: String, fullResponse: StringBuilder,
+    ): Boolean = try {
+        val request = LlmRequest.build(systemPrompt = systemPrompt, userMessage = userMessage, model = modelConfig.backgroundModel, maxTokens = MAX_TOKENS_FALLBACK)
+        val response = llm.complete(request)
+        fullResponse.append(response.content)
+        registry.sendMessage(sessionId, OutboundMessage.AiChunk(delta = response.content, done = false))
+        true
+    } catch (e: Exception) {
+        log.error("TheConductor fallback error for session {}: {}", sessionId, e.message); false
+    }
+
+    /** Detects real code vs pseudo code / comments / skeleton. */
+    private fun isMeaningfulCode(code: String?): Boolean {
+        if (code.isNullOrBlank()) return false
+        val lines = code.lines().map { it.trim() }.filter { it.isNotBlank() }
+        if (lines.size < 3) return false
+        val commentLines = lines.count {
+            it.startsWith("//") || it.startsWith("#") || it.startsWith("/*") || it.startsWith("*")
+        }
+        val realCodeLines = lines.size - commentLines
+        if (realCodeLines < 3) return false
+        // >70% comments = pseudo code
+        if (commentLines > 0 && commentLines.toFloat() / lines.size > 0.7f) return false
+        // Must have executable patterns
+        val execPatterns = listOf("=", "(", "if ", "for ", "while ", "return ", "new ", ".add", ".get", ".put")
+        val hasExecutable = lines.filter { !it.startsWith("//") && !it.startsWith("#") }
+            .any { line -> execPatterns.any { line.contains(it) } }
+        return hasExecutable
+    }
+
+    private fun getReassurance(brain: InterviewerBrain): String = when (brain.interviewType.uppercase()) {
+        "CODING", "DSA" -> listOf("Take your time.", "No rush — work through it.", "You've got time.", "Work at your own pace.").random()
+        "SYSTEM_DESIGN" -> listOf("Take your time thinking through this.", "There's no single right answer.", "Think out loud as you go.", "Draw it out if that helps.").random()
+        "BEHAVIORAL" -> listOf("Take a moment to think of a specific example.", "No rush — think of a real situation.", "Take your time.", "Think through your experience.").random()
+        else -> "Take your time."
+    }
+
+    /** Detect if response starts with an acknowledgment and track it. */
+    private suspend fun detectAndTrackAcknowledgment(sessionId: UUID, response: String) {
+        val firstWord = response.trim().split(" ", ",", ".").firstOrNull()?.trim() ?: return
+        if (NaturalPromptBuilder.ACKNOWLEDGMENT_POOL.any { it.equals(firstWord, ignoreCase = true) }) {
+            try { brainService.appendUsedAcknowledgment(sessionId, firstWord) } catch (e: Exception) { log.warn("Failed to track acknowledgment for session={}: {}", sessionId, e.message) }
+        }
+    }
+
+    private suspend fun streamStaticResponse(sessionId: UUID, response: String) {
+        registry.sendMessage(sessionId, OutboundMessage.AiChunk(delta = response, done = false))
+        registry.sendMessage(sessionId, OutboundMessage.AiChunk(delta = "", done = true))
+    }
+
+    private suspend fun persistResponse(sessionId: UUID, responseText: String) {
+        try {
+            withContext(Dispatchers.IO) {
+                conversationMessageRepository.save(
+                    ConversationMessage(sessionId = sessionId, role = "AI", content = responseText),
+                ).awaitSingle()
+            }
+        } catch (e: Exception) {
+            log.warn("Failed to persist AI message for session {}: {}", sessionId, e.message)
+        }
+    }
+}

@@ -46,17 +46,23 @@ class QuestionService(
         val selected = mutableListOf<Question>()
         val excludeIds = mutableListOf<UUID>()
         val params = QuestionGenerationParams(
-            category      = config.category,
-            difficulty    = config.difficulty,
-            topic         = "general",
-            targetCompany = config.targetCompany,
-            targetRole    = config.targetRole,
+            category            = config.category,
+            difficulty          = config.difficulty,
+            topic               = "general",
+            targetCompany       = config.targetCompany,
+            targetRole          = config.targetRole,
+            experienceLevel     = config.experienceLevel,
+            programmingLanguage = config.programmingLanguage,
+            background          = config.background,
         )
         repeat(count) {
             val q = getOrGenerateQuestion(params, excludeIds)
             selected.add(q)
             q.id?.let { excludeIds.add(it) }
         }
+        log.info("Selected {} questions for category={} difficulty={}: {}",
+            selected.size, config.category, config.difficulty,
+            selected.map { it.title })
         return selected
     }
 
