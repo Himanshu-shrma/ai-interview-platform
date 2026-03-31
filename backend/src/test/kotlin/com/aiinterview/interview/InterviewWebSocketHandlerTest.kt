@@ -3,6 +3,7 @@ package com.aiinterview.interview
 import com.aiinterview.code.service.CodeExecutionService
 import com.aiinterview.conversation.ConversationEngine
 import com.aiinterview.conversation.HintGenerator
+import com.aiinterview.conversation.brain.BrainService
 import com.aiinterview.interview.repository.ConversationMessageRepository
 import com.aiinterview.interview.repository.InterviewSessionRepository
 import com.aiinterview.interview.service.InterviewMemory
@@ -49,7 +50,8 @@ class InterviewWebSocketHandlerTest {
     private val evaluationReportRepo        = mockk<EvaluationReportRepository>(relaxed = true)
     private val sessionQuestionRepo         = mockk<com.aiinterview.interview.repository.SessionQuestionRepository>(relaxed = true)
     private val questionRepo                = mockk<com.aiinterview.interview.repository.QuestionRepository>(relaxed = true)
-    private val handler                     = InterviewWebSocketHandler(registry, memoryService, conversationEngine, hintGenerator, codeExecutionService, objectMapper, conversationMessageRepo, interviewSessionRepo, evaluationReportRepo, sessionQuestionRepo, questionRepo)
+    private val brainService                = mockk<BrainService>(relaxed = true)
+    private val handler                     = InterviewWebSocketHandler(registry, memoryService, conversationEngine, hintGenerator, codeExecutionService, objectMapper, conversationMessageRepo, interviewSessionRepo, evaluationReportRepo, sessionQuestionRepo, questionRepo, brainService)
 
     private val sessionId = UUID.randomUUID()
     private val userId    = UUID.randomUUID()

@@ -5,6 +5,7 @@ import com.aiinterview.code.repository.CodeSubmissionRepository
 import com.aiinterview.code.service.CodeExecutionService
 import com.aiinterview.conversation.ConversationEngine
 import com.aiinterview.conversation.InterviewState
+import com.aiinterview.conversation.brain.BrainService
 import com.aiinterview.interview.model.Question
 import com.aiinterview.interview.model.SessionQuestion
 import com.aiinterview.interview.repository.QuestionRepository
@@ -39,6 +40,8 @@ class CodeExecutionServiceTest {
     private val conversationEngine        = mockk<ConversationEngine>(relaxed = true)
     private val objectMapper              = ObjectMapper()
 
+    private val brainService: BrainService = mockk(relaxed = true)
+
     private val service = CodeExecutionService(
         judge0Client             = judge0Client,
         registry                 = registry,
@@ -48,6 +51,7 @@ class CodeExecutionServiceTest {
         codeSubmissionRepository  = codeSubmissionRepository,
         conversationEngine        = conversationEngine,
         objectMapper              = objectMapper,
+        brainService              = brainService,
     )
 
     private val sessionId         = UUID.randomUUID()
