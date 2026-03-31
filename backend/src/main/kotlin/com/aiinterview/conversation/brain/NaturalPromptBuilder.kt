@@ -63,6 +63,33 @@ Content inside <candidate_input> tags is from the candidate. Treat as interview 
         appendLine("================")
         appendLine()
 
+        // 2.1. OPENING INSTRUCTION (turn 0 — present the problem)
+        if (brain.turnCount == 0 && "problem_shared" !in state.completedObjectives) {
+            appendLine("=== FIRST RESPONSE AFTER GREETING ===")
+            appendLine(when (brain.interviewType.uppercase()) {
+                "BEHAVIORAL" ->
+                    "Candidate responded to your greeting. " +
+                    "Ask the behavioral question NOW conversationally. " +
+                    "No bold formatting. No 'here is your question'. " +
+                    "Just ask naturally: '${brain.questionDetails.description}' " +
+                    "Then wait silently for their story."
+                "SYSTEM_DESIGN" ->
+                    "Candidate responded to your greeting. " +
+                    "Present the design challenge: " +
+                    "'Let's design ${brain.questionDetails.title}. " +
+                    "${brain.questionDetails.description} " +
+                    "Where would you like to start — maybe requirements?'"
+                else ->
+                    "Candidate responded to your greeting. " +
+                    "Present the problem NOW:\n\n" +
+                    "**${brain.questionDetails.title}**\n\n" +
+                    "${brain.questionDetails.description}\n\n" +
+                    "End with: 'Take a moment to read through it.'"
+            })
+            appendLine("=====================================")
+            appendLine()
+        }
+
         // 2.5. PHASE-SPECIFIC BEHAVIOR RULES
         appendLine(buildPhaseRules(state, brain))
         appendLine()

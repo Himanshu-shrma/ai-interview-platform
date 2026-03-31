@@ -184,12 +184,10 @@ class ConversationEngine(
             else -> "Hey! I'll be your interviewer today."
         }
 
+        // Send greeting only — problem presented by TheConductor on turn 1 after candidate responds
         val openingMessage = when {
-            // BEHAVIORAL: warm greeting only — question comes naturally via TheConductor
             isBehavioral -> "$greeting Tell me a bit about what you've been working on lately."
-            // CODING/DSA/SYSTEM_DESIGN: greeting + problem statement
-            questionDesc.isNotBlank() -> "$greeting\n\n**$questionTitle**\n\n$questionDesc\n\nTake a moment to read through it."
-            else -> "$greeting Whenever you're ready, we can begin."
+            else -> "$greeting Whenever you're ready, we can jump in."
         }
 
         registry.sendMessage(sessionId, OutboundMessage.AiChunk(delta = openingMessage, done = false))
@@ -220,12 +218,8 @@ class ConversationEngine(
             if (question.title.isBlank()) log.error("CRITICAL: Question title is blank for session {}", sessionId)
             if (question.description.isBlank()) log.error("CRITICAL: Question description is blank for session {}", sessionId)
 
-            // Mark problem_shared complete for non-behavioral (presented in opening)
-            // Behavioral: problem_shared is marked later when AI naturally asks the question
-            if (questionDesc.isNotBlank() && !isBehavioral) {
-                brainService.markGoalComplete(sessionId, "problem_shared")
-                log.info("problem_shared marked complete for session {}", sessionId)
-            }
+            // problem_shared is marked by TheAnalyst after TheConductor presents the problem on turn 1
+            // (no longer marked here — greeting only, no problem dump)
         } catch (e: Exception) {
             log.error("Brain init failed for {}: {}", sessionId, e.message)
         }
