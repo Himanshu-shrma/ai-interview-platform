@@ -21,16 +21,16 @@ services:
   # ─── Application Redis ─────────────────────────────────────────────────────
   redis:
     image: redis:7-alpine
+    command: redis-server --appendonly yes --appendfsync everysec
     ports:
       - "6379:6379"
     volumes:
-      - redis_data:/data
-    command: redis-server --appendonly yes
+      - ./redis-data:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
+      interval: 10s
       timeout: 5s
-      retries: 10
+      retries: 5
     restart: unless-stopped
 
   # ─── Judge0 Internal Database ──────────────────────────────────────────────
@@ -98,6 +98,5 @@ services:
 
 volumes:
   postgres_data:
-  redis_data:
   judge0_postgres_data:
   judge0_redis_data:
