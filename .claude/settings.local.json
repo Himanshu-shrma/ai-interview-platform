@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Edit(/.claude/skills/llm-prompt-engineering/**)",
+      "Edit(/.claude/skills/interview-flow-design/**)"
+    ]
+  }
+}
