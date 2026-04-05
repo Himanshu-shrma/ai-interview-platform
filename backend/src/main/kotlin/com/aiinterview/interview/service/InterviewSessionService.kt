@@ -5,7 +5,6 @@ import com.aiinterview.interview.dto.SessionDetailDto
 import com.aiinterview.interview.dto.SessionSummaryDto
 import com.aiinterview.interview.dto.StartSessionResponse
 import com.aiinterview.interview.dto.toCandidateDto
-import com.aiinterview.interview.dto.toInternalDto
 import com.aiinterview.interview.model.InterviewSession
 import com.aiinterview.interview.model.SessionQuestion
 import com.aiinterview.interview.repository.InterviewSessionRepository
@@ -34,7 +33,6 @@ class InterviewSessionService(
     private val questionService: QuestionService,
     private val evaluationReportRepository: EvaluationReportRepository,
     private val usageLimitService: UsageLimitService,
-    private val redisMemoryService: RedisMemoryService,
     private val objectMapper: ObjectMapper,
     @Value("\${app.websocket.base-url:ws://localhost:8080}") private val wsBaseUrl: String,
 ) {
@@ -71,10 +69,6 @@ class InterviewSessionService(
                 )
             ).awaitSingle()
         }
-
-        // Initialize Redis memory so the WS handler can start the interview
-        val firstQuestion = questions.first().toInternalDto(objectMapper)
-        redisMemoryService.initMemory(sessionId, userId, config, firstQuestion, totalQuestions = questions.size)
 
         log.info("Started session {} for user {} (category={}, difficulty={})",
             sessionId, userId, config.category, config.difficulty)

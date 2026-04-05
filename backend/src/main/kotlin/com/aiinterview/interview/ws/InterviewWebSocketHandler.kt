@@ -5,12 +5,8 @@ import com.aiinterview.conversation.ConversationEngine
 import com.aiinterview.conversation.brain.BrainService
 import com.aiinterview.conversation.brain.InterviewerBrain
 import com.aiinterview.conversation.HintGenerator
-import com.aiinterview.conversation.InterviewState
 import com.aiinterview.interview.repository.ConversationMessageRepository
 import com.aiinterview.interview.repository.InterviewSessionRepository
-import com.aiinterview.interview.repository.QuestionRepository
-import com.aiinterview.interview.repository.SessionQuestionRepository
-import com.aiinterview.interview.service.RedisMemoryService
 import com.aiinterview.report.repository.EvaluationReportRepository
 import com.fasterxml.jackson.databind.ObjectMapper
 import kotlinx.coroutines.CoroutineExceptionHandler
@@ -33,7 +29,6 @@ import java.util.UUID
 @Component
 class InterviewWebSocketHandler(
     private val registry: WsSessionRegistry,
-    private val redisMemoryService: RedisMemoryService,
     private val conversationEngine: ConversationEngine,
     private val hintGenerator: HintGenerator,
     private val codeExecutionService: CodeExecutionService,
@@ -41,8 +36,6 @@ class InterviewWebSocketHandler(
     private val conversationMessageRepository: ConversationMessageRepository,
     private val interviewSessionRepository: InterviewSessionRepository,
     private val evaluationReportRepository: EvaluationReportRepository,
-    private val sessionQuestionRepository: SessionQuestionRepository,
-    private val questionRepository: QuestionRepository,
     private val brainService: BrainService,
 ) : WebSocketHandler {
 
@@ -156,37 +149,18 @@ class InterviewWebSocketHandler(
                 handleReconnectFromBrain(sessionId, brain)
             }
         } else {
-            // No brain — check if memory exists (legacy fallback) or session is ACTIVE in DB
-            val memoryExists = try { redisMemoryService.memoryExists(sessionId) } catch (_: Exception) { false }
-            if (memoryExists) {
-                // Legacy: memory exists but no brain — start interview (will create brain)
+            // Brain missing — session not started or expired
+            if (dbSession != null && dbSession.status == "ACTIVE") {
+                // Brain missing but session is active in DB — start fresh
                 registry.sendMessage(
                     sessionId,
                     OutboundMessage.InterviewStarted(sessionId = sessionId.toString(), state = "INTERVIEW_STARTING")
                 )
-                log.info("WS first connect (legacy memory): sessionId={}", sessionId)
+                log.info("WS connect (no brain, active session): sessionId={}", sessionId)
                 conversationEngine.startInterview(sessionId)
-            } else if (dbSession != null && dbSession.status == "ACTIVE") {
-                // Redis expired but DB says ACTIVE — try DB recovery
-                val recovered = try {
-                    redisMemoryService.getMemoryWithFallback(
-                        sessionId, interviewSessionRepository, sessionQuestionRepository,
-                        conversationMessageRepository, questionRepository,
-                    )
-                } catch (_: Exception) { null }
-                if (recovered != null) {
-                    handleReconnectFromDb(sessionId, recovered)
-                    log.info("Recovered session {} from DB after Redis miss", sessionId)
-                } else {
-                    withContext(Dispatchers.IO) {
-                        interviewSessionRepository.save(dbSession.copy(status = "ABANDONED")).awaitSingle()
-                    }
-                    registry.sendMessage(sessionId, OutboundMessage.Error("SESSION_EXPIRED", "Session memory expired. Please start a new interview."))
-                    log.warn("Redis memory expired for active session {}; marked abandoned", sessionId)
-                }
             } else {
                 registry.sendMessage(sessionId, OutboundMessage.Error("SESSION_NOT_FOUND", "Session not found or expired"))
-                log.warn("WS connect with no brain or memory: sessionId={}", sessionId)
+                log.warn("WS connect with no brain: sessionId={}", sessionId)
             }
         }
     }
@@ -225,50 +199,6 @@ class InterviewWebSocketHandler(
 
         registry.sendMessage(sessionId, stateSync)
         log.info("WS reconnected with STATE_SYNC (brain): sessionId={}, turns={}, messages={}", sessionId, brain.turnCount, recentMessages.size)
-    }
-
-    /**
-     * Legacy reconnect from DB-recovered InterviewMemory.
-     * Used only when brain is missing but DB session is ACTIVE.
-     */
-    private suspend fun handleReconnectFromDb(sessionId: UUID, memory: com.aiinterview.interview.service.InterviewMemory) {
-        val recentMessages = try {
-            withContext(Dispatchers.IO) {
-                conversationMessageRepository.findRecentBySessionId(sessionId, 50)
-                    .collectList().awaitSingle()
-            }.reversed()
-        } catch (e: Exception) {
-            log.warn("Failed to load messages for reconnect session {}: {}", sessionId, e.message)
-            emptyList()
-        }
-
-        val codingStates = setOf(
-            InterviewState.toString(InterviewState.CodingChallenge),
-            "CODING_CHALLENGE",
-        )
-
-        val stateSync = OutboundMessage.StateSync(
-            state                = memory.state,
-            currentQuestionIndex = memory.currentQuestionIndex,
-            totalQuestions       = memory.totalQuestions,
-            currentQuestion      = memory.currentQuestion?.let {
-                val templates = it.codeTemplates?.let { ct ->
-                    try {
-                        @Suppress("UNCHECKED_CAST")
-                        objectMapper.readValue(ct.toString(), Map::class.java) as? Map<String, String>
-                    } catch (_: Exception) { null }
-                }
-                QuestionSnapshot(title = it.title, description = it.description, codeTemplates = templates)
-            },
-            currentCode          = memory.currentCode,
-            programmingLanguage  = memory.programmingLanguage,
-            hintsGiven           = memory.hintsGiven,
-            messages             = recentMessages.map { MessageSnapshot(role = it.role, content = it.content) },
-            showCodeEditor       = memory.state in codingStates || !memory.currentCode.isNullOrBlank(),
-        )
-
-        registry.sendMessage(sessionId, stateSync)
-        log.info("WS reconnected with STATE_SYNC (db-recovery): sessionId={}, state={}, messages={}", sessionId, memory.state, recentMessages.size)
     }
 
     // ── Message Routing ───────────────────────────────────────────────────────

@@ -7,7 +7,6 @@ import com.aiinterview.interview.model.InterviewSession
 import com.aiinterview.interview.repository.InterviewSessionRepository
 import com.aiinterview.interview.repository.QuestionRepository
 import com.aiinterview.interview.repository.SessionQuestionRepository
-import com.aiinterview.interview.service.RedisMemoryService
 import com.aiinterview.interview.ws.OutboundMessage
 import com.aiinterview.interview.ws.WsSessionRegistry
 import com.aiinterview.report.model.EvaluationReport
@@ -35,7 +34,6 @@ class ReportServiceTest {
 
     private val evaluationAgent            = mockk<EvaluationAgent>()
     private val brainService               = mockk<BrainService>()
-    private val redisMemoryService         = mockk<RedisMemoryService>(relaxed = true)
     private val registry                   = mockk<WsSessionRegistry>(relaxed = true)
     private val evaluationReportRepository = mockk<EvaluationReportRepository>()
     private val interviewSessionRepository = mockk<InterviewSessionRepository>()
@@ -47,7 +45,6 @@ class ReportServiceTest {
     private val service = ReportService(
         evaluationAgent            = evaluationAgent,
         brainService               = brainService,
-        redisMemoryService         = redisMemoryService,
         registry                   = registry,
         evaluationReportRepository = evaluationReportRepository,
         interviewSessionRepository = interviewSessionRepository,
@@ -183,13 +180,6 @@ class ReportServiceTest {
                 it is OutboundMessage.SessionEnd && it.reportId == reportId
             })
         }
-    }
-
-    @Test
-    fun `generateAndSaveReport deletes Redis memory after saving`() = runBlocking {
-        service.generateAndSaveReport(sessionId)
-
-        coVerify { redisMemoryService.deleteMemory(sessionId) }
     }
 
     @Test

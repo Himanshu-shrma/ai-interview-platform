@@ -5,7 +5,6 @@ import com.aiinterview.interview.model.InterviewSession
 import com.aiinterview.interview.repository.InterviewSessionRepository
 import com.aiinterview.interview.repository.SessionQuestionRepository
 import com.aiinterview.interview.service.InterviewConfig
-import com.aiinterview.interview.service.RedisMemoryService
 import com.aiinterview.interview.ws.OutboundMessage
 import com.aiinterview.interview.ws.WsSessionRegistry
 import com.aiinterview.report.dto.NextStepDto
@@ -36,7 +35,6 @@ import java.util.UUID
 class ReportService(
     private val evaluationAgent: EvaluationAgent,
     private val brainService: BrainService,
-    private val redisMemoryService: RedisMemoryService,
     private val registry: WsSessionRegistry,
     private val evaluationReportRepository: EvaluationReportRepository,
     private val interviewSessionRepository: InterviewSessionRepository,
@@ -177,13 +175,6 @@ class ReportService(
         // 9. Send SESSION_END over WebSocket
         registry.sendMessage(sessionId, OutboundMessage.SessionEnd(reportId = reportId))
         log.info("Report generated for session={} reportId={} overallScore={}", sessionId, reportId, overallScore)
-
-        // 10. Delete Redis memory (cleanup)
-        try {
-            redisMemoryService.deleteMemory(sessionId)
-        } catch (e: Exception) {
-            log.warn("Failed to delete Redis memory for session {}: {}", sessionId, e.message)
-        }
 
         return reportId
     }

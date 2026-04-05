@@ -6,7 +6,7 @@ import java.util.UUID
 
 // ═══════════════════════════════════════════════════════════════
 // InterviewerBrain — Unified cognitive state for the AI interviewer
-// Replaces InterviewMemory (which is kept for backward compatibility)
+// Unified cognitive state for the AI interviewer
 // ═══════════════════════════════════════════════════════════════
 
 @JsonIgnoreProperties(ignoreUnknown = true)

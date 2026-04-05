@@ -8,7 +8,6 @@ import com.aiinterview.conversation.brain.InterviewQuestion
 import com.aiinterview.conversation.brain.InterviewerBrain
 import com.aiinterview.interview.repository.ConversationMessageRepository
 import com.aiinterview.interview.repository.InterviewSessionRepository
-import com.aiinterview.interview.service.RedisMemoryService
 import com.aiinterview.interview.ws.ATTR_SESSION_ID
 import com.aiinterview.interview.ws.ATTR_USER_ID
 import com.aiinterview.interview.ws.InterviewWebSocketHandler
@@ -41,17 +40,14 @@ class InterviewWebSocketHandlerTest {
     }
 
     private val registry                    = mockk<WsSessionRegistry>(relaxed = true)
-    private val memoryService               = mockk<RedisMemoryService>(relaxed = true)
     private val conversationEngine          = mockk<ConversationEngine>(relaxed = true)
     private val hintGenerator               = mockk<HintGenerator>(relaxed = true)
     private val codeExecutionService        = mockk<CodeExecutionService>(relaxed = true)
     private val conversationMessageRepo     = mockk<ConversationMessageRepository>(relaxed = true)
     private val interviewSessionRepo        = mockk<InterviewSessionRepository>(relaxed = true)
     private val evaluationReportRepo        = mockk<EvaluationReportRepository>(relaxed = true)
-    private val sessionQuestionRepo         = mockk<com.aiinterview.interview.repository.SessionQuestionRepository>(relaxed = true)
-    private val questionRepo                = mockk<com.aiinterview.interview.repository.QuestionRepository>(relaxed = true)
     private val brainService                = mockk<BrainService>(relaxed = true)
-    private val handler                     = InterviewWebSocketHandler(registry, memoryService, conversationEngine, hintGenerator, codeExecutionService, objectMapper, conversationMessageRepo, interviewSessionRepo, evaluationReportRepo, sessionQuestionRepo, questionRepo, brainService)
+    private val handler                     = InterviewWebSocketHandler(registry, conversationEngine, hintGenerator, codeExecutionService, objectMapper, conversationMessageRepo, interviewSessionRepo, evaluationReportRepo, brainService)
 
     private val sessionId = UUID.randomUUID()
     private val userId    = UUID.randomUUID()
@@ -91,7 +87,7 @@ class InterviewWebSocketHandlerTest {
     @Test
     fun `connect with no brain and no memory sends SESSION_NOT_FOUND`() {
         coEvery { brainService.getBrainOrNull(sessionId) } returns null
-        coEvery { memoryService.memoryExists(sessionId) } returns false
+
 
         inboundSink.tryEmitComplete()
         handler.handle(wsSession).block()
@@ -121,7 +117,7 @@ class InterviewWebSocketHandlerTest {
     @Test
     fun `PING message returns PONG`() {
         coEvery { brainService.getBrainOrNull(sessionId) } returns null
-        coEvery { memoryService.memoryExists(sessionId) } returns false
+
 
         inboundSink.tryEmitNext(mockMessage("""{"type":"PING"}"""))
         inboundSink.tryEmitComplete()
@@ -135,7 +131,7 @@ class InterviewWebSocketHandlerTest {
     @Test
     fun `CODE_UPDATE syncs code to brain`() {
         coEvery { brainService.getBrainOrNull(sessionId) } returns null
-        coEvery { memoryService.memoryExists(sessionId) } returns false
+
 
         inboundSink.tryEmitNext(mockMessage("""{"type":"CODE_UPDATE","code":"val x = 1","language":"kotlin"}"""))
         inboundSink.tryEmitComplete()
@@ -149,7 +145,7 @@ class InterviewWebSocketHandlerTest {
     @Test
     fun `END_INTERVIEW triggers forceEndInterview on conversation engine`() {
         coEvery { brainService.getBrainOrNull(sessionId) } returns null
-        coEvery { memoryService.memoryExists(sessionId) } returns false
+
 
         inboundSink.tryEmitNext(mockMessage("""{"type":"END_INTERVIEW","reason":"CANDIDATE_ENDED"}"""))
         inboundSink.tryEmitComplete()
@@ -163,7 +159,7 @@ class InterviewWebSocketHandlerTest {
     @Test
     fun `unparseable message sends ERROR and continues`() {
         coEvery { brainService.getBrainOrNull(sessionId) } returns null
-        coEvery { memoryService.memoryExists(sessionId) } returns false
+
 
         inboundSink.tryEmitNext(mockMessage("""not valid json at all"""))
         inboundSink.tryEmitComplete()
@@ -177,7 +173,7 @@ class InterviewWebSocketHandlerTest {
     @Test
     fun `session is registered on connect and deregistered on disconnect`() {
         coEvery { brainService.getBrainOrNull(sessionId) } returns null
-        coEvery { memoryService.memoryExists(sessionId) } returns false
+
 
         inboundSink.tryEmitComplete()
         handler.handle(wsSession).block()

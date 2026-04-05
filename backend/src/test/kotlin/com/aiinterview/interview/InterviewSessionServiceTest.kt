@@ -15,7 +15,6 @@ import com.aiinterview.report.repository.EvaluationReportRepository
 import com.aiinterview.shared.domain.Difficulty
 import com.aiinterview.shared.domain.InterviewCategory
 import com.aiinterview.user.model.User
-import com.aiinterview.interview.service.RedisMemoryService
 import com.aiinterview.user.service.UsageLimitService
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import io.mockk.coEvery
@@ -39,7 +38,6 @@ class InterviewSessionServiceTest {
     private val questionService       = mockk<QuestionService>()
     private val evaluationReportRepo  = mockk<EvaluationReportRepository>()
     private val usageLimitService     = mockk<UsageLimitService>()
-    private val redisMemoryService   = mockk<RedisMemoryService>(relaxed = true)
     private val objectMapper          = jacksonObjectMapper()
 
     private val service = InterviewSessionService(
@@ -48,7 +46,6 @@ class InterviewSessionServiceTest {
         questionService            = questionService,
         evaluationReportRepository = evaluationReportRepo,
         usageLimitService          = usageLimitService,
-        redisMemoryService         = redisMemoryService,
         objectMapper               = objectMapper,
         wsBaseUrl                  = "ws://localhost:8080",
     )
