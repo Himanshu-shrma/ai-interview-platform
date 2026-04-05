@@ -10,6 +10,8 @@ data class ScoresDto(
     val communication: Double,
     val efficiency: Double,
     val testing: Double,
+    val initiative: Double,
+    val learningAgility: Double,
     val overall: Double,
 )
 

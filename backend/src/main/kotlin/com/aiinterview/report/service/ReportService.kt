@@ -335,6 +335,8 @@ class ReportService(
                 communication   = report.communicationScore?.toDouble() ?: 0.0,
                 efficiency      = report.efficiencyScore?.toDouble() ?: 0.0,
                 testing         = report.testingScore?.toDouble() ?: 0.0,
+                initiative      = report.initiativeScore?.toDouble() ?: 0.0,
+                learningAgility = report.learningAgilityScore?.toDouble() ?: 0.0,
                 overall         = report.overallScore?.toDouble() ?: 0.0,
             ),
             strengths           = strengthsList,

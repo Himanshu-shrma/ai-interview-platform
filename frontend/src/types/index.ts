@@ -106,6 +106,8 @@ export interface ScoresDto {
   communication: number
   efficiency: number
   testing: number
+  initiative: number
+  learningAgility: number
   overall: number
 }
 

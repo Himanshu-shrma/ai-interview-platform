@@ -70,6 +70,19 @@ const dimensionLabels: Record<keyof Omit<ScoresDto, 'overall'>, string> = {
   communication: 'Communication',
   efficiency: 'Efficiency',
   testing: 'Testing',
+  initiative: 'Initiative',
+  learningAgility: 'Learning Agility',
+}
+
+const DIMENSION_WEIGHTS: Record<keyof Omit<ScoresDto, 'overall'>, number> = {
+  problemSolving: 20,
+  algorithmChoice: 15,
+  codeQuality: 15,
+  communication: 15,
+  efficiency: 10,
+  testing: 10,
+  initiative: 10,
+  learningAgility: 5,
 }
 
 const DIMENSION_EXPLANATIONS: Record<keyof Omit<ScoresDto, 'overall'>, string> = {
@@ -79,6 +92,8 @@ const DIMENSION_EXPLANATIONS: Record<keyof Omit<ScoresDto, 'overall'>, string> =
   communication: 'Clarity of thought process explanation, asking good questions, and articulating decisions.',
   efficiency: 'Awareness of time/space complexity, optimization attempts, and performance considerations.',
   testing: 'Edge case identification, debugging approach, and verification of solution correctness.',
+  initiative: 'Going beyond the minimum — proactive edge cases, voluntary optimizations, genuine curiosity.',
+  learningAgility: 'How effectively you learned during the interview — self-correction, adapting after hints, asking why.',
 }
 
 function buildRadarData(scores: ScoresDto) {
@@ -97,12 +112,14 @@ function DimensionBar({
   feedback,
   delay,
   explanation,
+  weight,
 }: {
   label: string
   score: number
   feedback?: string
   delay: number
   explanation?: string
+  weight?: number
 }) {
   const [width, setWidth] = useState(0)
   useEffect(() => {
@@ -113,8 +130,11 @@ function DimensionBar({
   return (
     <div className="space-y-1">
       <div className="flex items-center justify-between text-sm">
-        <span className="font-medium group relative cursor-help">
+        <span className="font-medium group relative cursor-help flex items-center gap-1.5">
           {label}
+          {weight != null && (
+            <span className="text-[10px] text-muted-foreground font-normal">{weight}%</span>
+          )}
           {explanation && (
             <span className="invisible group-hover:visible absolute left-0 top-full z-10 mt-1 w-64 rounded-md bg-popover p-2 text-xs text-popover-foreground shadow-md border">
               {explanation}
@@ -255,10 +275,10 @@ function ReportContent({ report }: { report: ReportDto }) {
 
         <Card>
           <CardContent className="p-4">
-            <ResponsiveContainer width="100%" height={280}>
-              <RadarChart data={radarData} cx="50%" cy="50%" outerRadius="75%">
+            <ResponsiveContainer width="100%" height={300}>
+              <RadarChart data={radarData} cx="50%" cy="50%" outerRadius="70%">
                 <PolarGrid />
-                <PolarAngleAxis dataKey="dimension" tick={{ fontSize: 11 }} />
+                <PolarAngleAxis dataKey="dimension" tick={{ fontSize: 10 }} />
                 <PolarRadiusAxis angle={30} domain={[0, 10]} tick={{ fontSize: 10 }} />
                 <Radar
                   name="Score"
@@ -287,6 +307,7 @@ function ReportContent({ report }: { report: ReportDto }) {
               score={report.scores[key]}
               feedback={report.dimensionFeedback[key]}
               explanation={DIMENSION_EXPLANATIONS[key]}
+              weight={DIMENSION_WEIGHTS[key]}
               delay={i * 100}
             />
           ))}
