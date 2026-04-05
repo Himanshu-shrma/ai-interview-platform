@@ -34,6 +34,11 @@ The system prompt is built dynamically each turn from `InterviewerBrain` state. 
 | 12 | CODE | Inline in `build()` | ~200-2000 | Code exists for coding types |
 | 13 | HARD_RULES | `HARD_RULES` const + ack tracking | ~200 | Always |
 
+Note: Token estimates above are for CODING interviews.
+BEHAVIORAL omits section 12 (CODE).
+Turn 0 in BEHAVIORAL uses section 3 to ask the
+behavioral question, not present a coding problem.
+
 ### Adding a New Section
 
 1. Pick position carefully — later = more attention

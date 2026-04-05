@@ -9,7 +9,9 @@
       "Edit(/.claude/skills/frontend-interview-ui/**)",
       "Edit(/.claude/skills/code-execution-judge0/**)",
       "Edit(/.claude/skills/evaluation-scoring/**)",
-      "Bash(ls -la .claude/skills/*.md)"
+      "Bash(ls -la .claude/skills/*.md)",
+      "Bash(mvn compile:*)",
+      "Bash(npm run:*)"
     ]
   },
   "language": "Kotlin + TypeScript",

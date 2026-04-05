@@ -53,6 +53,10 @@ ConversationEngine.forceEndInterview(sessionId)
         2. Load InterviewMemory from Redis
         3. Load session from DB
         4. EvaluationAgent.evaluate(memory, brain?)
+        ⚠️ RACE CONDITION RISK: Brain is deleted in the finally block
+           of forceEndInterview() AFTER this flow completes. If evaluation
+           is slow and brain TTL expires first, enrichment signals may
+           be missing. Do not move brain deletion before evaluation.
         5. Compute overallScore with weighted formula
         6. Persist EvaluationReport to DB
         7. Update session status = COMPLETED

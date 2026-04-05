@@ -177,27 +177,4 @@ class InterviewController(private val sessionService: InterviewSessionService) {
 - Uses JDBC (not R2DBC) �� separate connection config in application.yml
 - Always: `IF NOT EXISTS`, `UUID` with `gen_random_uuid()`, never SERIAL
 
-## Package Organization
-```
-com.aiinterview/
-  auth/          — ClerkJwtAuthFilter, SecurityConfig, RateLimitFilter
-  code/          — Judge0Client, CodeExecutionService, LanguageMap
-  conversation/  — ConversationEngine, HintGenerator, InterviewState
-    brain/       — TheConductor, TheAnalyst, TheStrategist, BrainService, etc.
-    knowledge/   — KnowledgeAdjacencyMap
-  interview/
-    controller/  — InterviewController, QuestionController
-    dto/         — SessionDto, QuestionDto, ApiError
-    model/       — InterviewSession, Question, ConversationMessage, SessionQuestion
-    repository/  — All R2DBC repositories
-    service/     — InterviewSessionService, QuestionService, RedisMemoryService
-    ws/          — InterviewWebSocketHandler, WsSessionRegistry, WsMessageTypes
-  report/
-    controller/  — ReportController
-    service/     — ReportService, EvaluationAgent
-    model/       — EvaluationReport
-  shared/
-    ai/          — LlmProviderRegistry, LlmRequest, ModelConfig, providers/
-    domain/      — Enums
-  user/          — UserBootstrapService, UsageLimitService
-```
+For package structure → references/package-map.md

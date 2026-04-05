@@ -145,6 +145,19 @@ If false, returns canned response without calling LLM:
 - "Go ahead — I'll wait while you code."
 - "I don't see code yet — go ahead and implement when ready."
 
+## startInterview() — First Message
+
+ConversationEngine.startInterview() sends GREETING ONLY.
+TheConductor presents the problem on turn 1 by detecting
+that 'problem_shared' is not in brain.interviewGoals.completed.
+
+CODING turn 1: TheConductor presents problem statement.
+BEHAVIORAL turn 1: TheConductor asks behavioral question conversationally.
+SYSTEM_DESIGN turn 1: TheConductor presents design challenge.
+
+Do NOT add problem presentation to startInterview().
+It belongs in NaturalPromptBuilder OPENING_INSTRUCTION section.
+
 ## Type-Specific Frontend Layout
 
 ```typescript
