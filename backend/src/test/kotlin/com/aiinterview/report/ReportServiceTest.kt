@@ -13,6 +13,7 @@ import com.aiinterview.report.model.EvaluationReport
 import com.aiinterview.report.repository.EvaluationReportRepository
 import com.aiinterview.report.service.EvaluationAgent
 import com.aiinterview.report.service.EvaluationResult
+import com.aiinterview.report.service.EvaluationScores
 import com.aiinterview.report.service.ReportService
 import com.aiinterview.user.service.UsageLimitService
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
@@ -103,6 +104,16 @@ class ReportServiceTest {
             "efficiency" to "Adequate",
             "testing" to "Needs work",
         ),
+        scores = EvaluationScores(
+            problemSolving  = 8.0,
+            algorithmChoice = 7.0,
+            codeQuality     = 6.0,
+            communication   = 9.0,
+            efficiency      = 5.0,
+            testing         = 4.0,
+            initiative      = 7.0,
+            learningAgility = 6.0,
+        ),
     )
 
     @BeforeEach
@@ -137,10 +148,12 @@ class ReportServiceTest {
     }
 
     @Test
-    fun `generateAndSaveReport computes overallScore with correct weights`() = runBlocking {
-        // ps=8.0*0.25=2.0, ac=7.0*0.20=1.4, cq=6.0*0.20=1.2,
-        // comm=9.0*0.15=1.35, eff=5.0*0.10=0.5, test=4.0*0.10=0.4
-        // total = 6.85
+    fun `generateAndSaveReport computes overallScore with correct 8-dimension weights`() = runBlocking {
+        // 8-dimension weighted formula (weights sum to 1.00):
+        // ps=8.0*0.20=1.60, algo=7.0*0.15=1.05, cq=6.0*0.15=0.90,
+        // comm=9.0*0.15=1.35, eff=5.0*0.10=0.50, test=4.0*0.10=0.40,
+        // init=7.0*0.10=0.70, la=6.0*0.05=0.30
+        // total = 6.80
         val savedReport = slot<EvaluationReport>()
         coEvery { evaluationReportRepository.save(capture(savedReport)) } returns
             Mono.just(EvaluationReport(id = reportId, sessionId = sessionId, userId = userId))
@@ -148,7 +161,7 @@ class ReportServiceTest {
         service.generateAndSaveReport(sessionId)
 
         val score = savedReport.captured.overallScore?.toDouble() ?: 0.0
-        assertEquals(6.85, score, 0.01)
+        assertEquals(6.80, score, 0.01)
     }
 
     @Test
