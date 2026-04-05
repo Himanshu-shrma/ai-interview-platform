@@ -2,11 +2,19 @@ package com.aiinterview.interview.ws
 
 import com.aiinterview.code.service.CodeExecutionService
 import com.aiinterview.conversation.ConversationEngine
+import com.aiinterview.conversation.brain.BrainObjectivesRegistry
 import com.aiinterview.conversation.brain.BrainService
+import com.aiinterview.conversation.brain.BrainTranscriptTurn
+import com.aiinterview.conversation.brain.InterviewQuestion
 import com.aiinterview.conversation.brain.InterviewerBrain
 import com.aiinterview.conversation.HintGenerator
+import com.aiinterview.interview.dto.toInternalDto
+import com.aiinterview.interview.model.InterviewSession
 import com.aiinterview.interview.repository.ConversationMessageRepository
 import com.aiinterview.interview.repository.InterviewSessionRepository
+import com.aiinterview.interview.repository.QuestionRepository
+import com.aiinterview.interview.repository.SessionQuestionRepository
+import com.aiinterview.interview.service.InterviewConfig
 import com.aiinterview.report.repository.EvaluationReportRepository
 import com.fasterxml.jackson.databind.ObjectMapper
 import kotlinx.coroutines.CoroutineExceptionHandler
@@ -36,18 +44,18 @@ class InterviewWebSocketHandler(
     private val conversationMessageRepository: ConversationMessageRepository,
     private val interviewSessionRepository: InterviewSessionRepository,
     private val evaluationReportRepository: EvaluationReportRepository,
+    private val sessionQuestionRepository: SessionQuestionRepository,
+    private val questionRepository: QuestionRepository,
     private val brainService: BrainService,
 ) : WebSocketHandler {
 
-    /** Fire-and-forget scope for code execution (same pattern as ConversationEngine). */
     private val codeScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     private val log = LoggerFactory.getLogger(InterviewWebSocketHandler::class.java)
 
-    // ── Input validation ──
     companion object {
         private const val MAX_MESSAGE_LENGTH = 2000
-        private const val MAX_CODE_LENGTH = 51200  // 50KB
+        private const val MAX_CODE_LENGTH = 51200
         private const val MESSAGE_RATE_LIMIT_MS = 1000L
     }
 
@@ -76,18 +84,13 @@ class InterviewWebSocketHandler(
             }
 
         val outboundFlux = registry.register(sessionId, session)
-
-        val outbound = session.send(
-            outboundFlux.map { json -> session.textMessage(json) }
-        )
-
+        val outbound = session.send(outboundFlux.map { json -> session.textMessage(json) })
         val inbound = mono { onConnect(sessionId, userId) }
             .thenMany(
-                session.receive()
-                    .flatMap { wsMsg ->
-                        val text = wsMsg.payloadAsText
-                        mono { handleMessage(sessionId, text) }
-                    }
+                session.receive().flatMap { wsMsg ->
+                    val text = wsMsg.payloadAsText
+                    mono { handleMessage(sessionId, text) }
+                }
             )
             .then()
 
@@ -106,12 +109,10 @@ class InterviewWebSocketHandler(
     // ── Connect / Reconnect ───────────────────────────────────────────────────
 
     private suspend fun onConnect(sessionId: UUID, userId: UUID) {
-        // Check DB first — handles completed/abandoned sessions even if Redis expired
         val dbSession = withContext(Dispatchers.IO) {
             interviewSessionRepository.findById(sessionId).awaitSingleOrNull()
         }
 
-        // Edge case: session already completed → redirect to report
         if (dbSession?.status == "COMPLETED") {
             val report = withContext(Dispatchers.IO) {
                 evaluationReportRepository.findBySessionId(sessionId).awaitSingleOrNull()
@@ -125,23 +126,18 @@ class InterviewWebSocketHandler(
             return
         }
 
-        // Edge case: session abandoned or expired
         if (dbSession?.status == "ABANDONED" || dbSession?.status == "EXPIRED") {
             registry.sendMessage(sessionId, OutboundMessage.Error("SESSION_EXPIRED", "This session has expired. Please start a new interview."))
             log.info("WS connect to {}: sessionId={}", dbSession.status, sessionId)
             return
         }
 
-        // Use brain to detect first-connect vs reconnect
         val brain = brainService.getBrainOrNull(sessionId)
 
         if (brain != null) {
             if (brain.turnCount == 0 && brain.rollingTranscript.isEmpty()) {
-                // First connect — brain exists but no turns yet → interview just started
-                registry.sendMessage(
-                    sessionId,
-                    OutboundMessage.InterviewStarted(sessionId = sessionId.toString(), state = "INTERVIEW_STARTING")
-                )
+                // First connect — brain exists but no turns yet
+                registry.sendMessage(sessionId, OutboundMessage.InterviewStarted(sessionId = sessionId.toString(), state = "INTERVIEW_STARTING"))
                 log.info("WS first connect: sessionId={}, userId={}", sessionId, userId)
                 conversationEngine.startInterview(sessionId)
             } else {
@@ -149,15 +145,20 @@ class InterviewWebSocketHandler(
                 handleReconnectFromBrain(sessionId, brain)
             }
         } else {
-            // Brain missing — session not started or expired
+            // Brain missing — reconstruct from DB or start fresh
             if (dbSession != null && dbSession.status == "ACTIVE") {
-                // Brain missing but session is active in DB — start fresh
-                registry.sendMessage(
-                    sessionId,
-                    OutboundMessage.InterviewStarted(sessionId = sessionId.toString(), state = "INTERVIEW_STARTING")
-                )
-                log.info("WS connect (no brain, active session): sessionId={}", sessionId)
-                conversationEngine.startInterview(sessionId)
+                val reconstructed = reconstructBrainFromDb(sessionId, dbSession)
+                if (reconstructed != null) {
+                    handleReconnectFromBrain(sessionId, reconstructed)
+                    log.warn("Brain reconstructed from DB for session {}", sessionId)
+                } else {
+                    // Cannot reconstruct — session too broken to resume
+                    withContext(Dispatchers.IO) {
+                        interviewSessionRepository.save(dbSession.copy(status = "ABANDONED")).awaitSingle()
+                    }
+                    registry.sendMessage(sessionId, OutboundMessage.Error("SESSION_EXPIRED", "Your session expired. Please start a new interview."))
+                    log.warn("Brain reconstruction failed, session {} marked abandoned", sessionId)
+                }
             } else {
                 registry.sendMessage(sessionId, OutboundMessage.Error("SESSION_NOT_FOUND", "Session not found or expired"))
                 log.warn("WS connect with no brain: sessionId={}", sessionId)
@@ -167,7 +168,7 @@ class InterviewWebSocketHandler(
 
     /**
      * Sends STATE_SYNC from Brain state on WS reconnect.
-     * Brain is the primary state source. Messages loaded from DB.
+     * State is derived from brain goals, not hardcoded.
      */
     private suspend fun handleReconnectFromBrain(sessionId: UUID, brain: InterviewerBrain) {
         val recentMessages = try {
@@ -182,8 +183,17 @@ class InterviewWebSocketHandler(
 
         val isCodingType = brain.interviewType.uppercase() in setOf("CODING", "DSA")
 
+        // Derive state from brain goals instead of hardcoding
+        val state = when {
+            brain.interviewGoals.completed.contains("solution_implemented")
+                || !brain.currentCode.isNullOrBlank() -> "CODING_CHALLENGE"
+            brain.interviewGoals.completed.contains("problem_shared") -> "QUESTION_PRESENTED"
+            else -> "QUESTION_PRESENTED"
+        }
+        val showCodeEditor = isCodingType && (state == "CODING_CHALLENGE" || !brain.currentCode.isNullOrBlank())
+
         val stateSync = OutboundMessage.StateSync(
-            state                = "QUESTION_PRESENTED",
+            state                = state,
             currentQuestionIndex = 0,
             totalQuestions       = 1,
             currentQuestion      = QuestionSnapshot(
@@ -194,11 +204,71 @@ class InterviewWebSocketHandler(
             programmingLanguage  = brain.programmingLanguage,
             hintsGiven           = brain.hintsGiven,
             messages             = recentMessages.map { MessageSnapshot(role = it.role, content = it.content) },
-            showCodeEditor       = isCodingType || !brain.currentCode.isNullOrBlank(),
+            showCodeEditor       = showCodeEditor,
         )
 
         registry.sendMessage(sessionId, stateSync)
-        log.info("WS reconnected with STATE_SYNC (brain): sessionId={}, turns={}, messages={}", sessionId, brain.turnCount, recentMessages.size)
+        log.info("WS reconnected with STATE_SYNC: sessionId={}, state={}, turns={}, messages={}", sessionId, state, brain.turnCount, recentMessages.size)
+    }
+
+    /**
+     * Reconstructs a Brain from DB when Redis key expired mid-interview.
+     * Returns null if the session data is too incomplete to reconstruct.
+     */
+    private suspend fun reconstructBrainFromDb(sessionId: UUID, dbSession: InterviewSession): InterviewerBrain? {
+        return try {
+            val config = objectMapper.readValue(dbSession.config ?: return null, InterviewConfig::class.java)
+
+            val firstSq = withContext(Dispatchers.IO) {
+                sessionQuestionRepository.findBySessionIdOrderByOrderIndex(sessionId)
+                    .next().awaitSingleOrNull()
+            } ?: return null
+
+            val question = withContext(Dispatchers.IO) {
+                questionRepository.findById(firstSq.questionId).awaitSingleOrNull()
+            }?.toInternalDto(objectMapper) ?: return null
+
+            val recentMessages = withContext(Dispatchers.IO) {
+                conversationMessageRepository.findRecentBySessionId(sessionId, 20)
+                    .collectList().awaitSingle()
+            }.reversed()
+
+            val q = InterviewQuestion(
+                questionId = question.id?.toString() ?: "",
+                title = question.title,
+                description = question.description,
+                optimalApproach = question.optimalApproach ?: "",
+                difficulty = question.difficulty ?: "MEDIUM",
+                category = config.category.name,
+            )
+            val goals = BrainObjectivesRegistry.forCategory(config.category.name)
+            val rollingTranscript = recentMessages.takeLast(8).map {
+                BrainTranscriptTurn(role = it.role, content = it.content)
+            }
+
+            // Re-initialise and save to Redis so next operations work
+            brainService.initBrain(
+                sessionId = sessionId,
+                userId = dbSession.userId,
+                interviewType = config.category.name,
+                question = q,
+                goals = goals,
+                personality = config.personality,
+                configuredDurationMinutes = config.durationMinutes,
+            )
+            // Patch turnCount + transcript so TheConductor/TheStrategist work correctly
+            brainService.updateBrain(sessionId) { b ->
+                b.copy(
+                    turnCount = recentMessages.size,
+                    rollingTranscript = rollingTranscript,
+                    earlierContext = "[Session recovered after brain expiry]",
+                )
+            }
+            brainService.getBrainOrNull(sessionId)
+        } catch (e: Exception) {
+            log.error("Brain reconstruction failed for session {}: {}", sessionId, e.message)
+            null
+        }
     }
 
     // ── Message Routing ───────────────────────────────────────────────────────
@@ -250,15 +320,11 @@ class InterviewWebSocketHandler(
                     return
                 }
 
-                // Sync code snapshot into brain (if provided)
                 msg.codeSnapshot?.let { snap ->
                     if (snap.hasMeaningfulCode && !snap.content.isNullOrBlank()) {
                         try {
                             brainService.updateBrain(sessionId) { b ->
-                                b.copy(
-                                    currentCode = snap.content,
-                                    programmingLanguage = snap.language ?: b.programmingLanguage,
-                                )
+                                b.copy(currentCode = snap.content, programmingLanguage = snap.language ?: b.programmingLanguage)
                             }
                         } catch (e: Exception) {
                             log.debug("Failed to sync code snapshot for session {}: {}", sessionId, e.message)
@@ -270,31 +336,20 @@ class InterviewWebSocketHandler(
 
             "CODE_RUN" -> {
                 val msg = objectMapper.treeToValue(tree, InboundMessage.CodeRun::class.java)
-                val handler = CoroutineExceptionHandler { _, e ->
-                    log.error("CODE_RUN failed for session {}: {}", sessionId, e.message)
-                }
-                codeScope.launch(handler) {
-                    codeExecutionService.runCode(sessionId, msg.code, msg.language, msg.stdin)
-                }
+                val handler = CoroutineExceptionHandler { _, e -> log.error("CODE_RUN failed for session {}: {}", sessionId, e.message) }
+                codeScope.launch(handler) { codeExecutionService.runCode(sessionId, msg.code, msg.language, msg.stdin) }
             }
 
             "CODE_SUBMIT" -> {
                 val msg = objectMapper.treeToValue(tree, InboundMessage.CodeSubmit::class.java)
-                val handler = CoroutineExceptionHandler { _, e ->
-                    log.error("CODE_SUBMIT failed for session {}: {}", sessionId, e.message)
-                }
-                codeScope.launch(handler) {
-                    codeExecutionService.submitCode(sessionId, msg.sessionQuestionId, msg.code, msg.language)
-                }
+                val handler = CoroutineExceptionHandler { _, e -> log.error("CODE_SUBMIT failed for session {}: {}", sessionId, e.message) }
+                codeScope.launch(handler) { codeExecutionService.submitCode(sessionId, msg.sessionQuestionId, msg.code, msg.language) }
             }
 
             "CODE_UPDATE" -> {
                 val msg = objectMapper.treeToValue(tree, InboundMessage.CodeUpdate::class.java)
-                // Sync code to brain for AI code awareness
                 try {
-                    brainService.updateBrain(sessionId) { b ->
-                        b.copy(currentCode = msg.code, programmingLanguage = msg.language)
-                    }
+                    brainService.updateBrain(sessionId) { b -> b.copy(currentCode = msg.code, programmingLanguage = msg.language) }
                 } catch (e: Exception) {
                     log.warn("Failed to sync code to brain for session={}: {}", sessionId, e.message)
                 }
@@ -321,8 +376,6 @@ class InterviewWebSocketHandler(
             }
         }
     }
-
-    // ── Disconnect ────────────────────────────────────────────────────────────
 
     private fun onDisconnect(sessionId: UUID) {
         registry.deregister(sessionId)

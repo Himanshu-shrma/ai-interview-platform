@@ -64,7 +64,10 @@ class BrainService(
     suspend fun getBrain(sessionId: UUID): InterviewerBrain {
         val key = brainKey(sessionId)
         val json = redisTemplate.opsForValue().get(key).awaitSingleOrNull()
-            ?: throw RuntimeException("Brain not found for session: $sessionId")
+            ?: run {
+                log.error("Brain cache miss for session {} — key={} — this will cause brain state to freeze if mid-interview", sessionId, key)
+                throw RuntimeException("Brain not found for session: $sessionId")
+            }
         return objectMapper.readValue(json, InterviewerBrain::class.java)
     }
 
