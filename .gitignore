@@ -38,3 +38,4 @@ frontend/playwright-report/
 
 # ── Judge0 runtime data (if any local override) ───────────────────────────────
 judge0/judge0.conf.local
+.claude/settings.local.json
