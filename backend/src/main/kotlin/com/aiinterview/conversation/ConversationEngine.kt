@@ -15,7 +15,6 @@ import com.aiinterview.interview.repository.InterviewSessionRepository
 import com.aiinterview.interview.repository.SessionQuestionRepository
 import com.aiinterview.interview.service.InterviewConfig
 import com.aiinterview.interview.service.QuestionService
-import com.aiinterview.interview.service.RedisMemoryService
 import com.aiinterview.interview.ws.OutboundMessage
 import com.aiinterview.interview.ws.WsSessionRegistry
 import com.aiinterview.report.service.ReportService
@@ -47,15 +46,10 @@ import java.util.concurrent.ConcurrentHashMap
  * - TheStrategist for meta-cognitive review (every 5 turns)
  * - BrainFlowGuard for safety rules
  *
- * [redisMemoryService] is retained ONLY for transition() state writes
- * (InterviewWebSocketHandler reads memory.state for connect/reconnect).
- * All data reads come from Brain or DB. No memory reads in this class.
- *
  * [reportService] uses @Lazy as a safety guard against Spring init ordering issues.
  */
 @Service
 class ConversationEngine(
-    private val redisMemoryService: RedisMemoryService,
     private val registry: WsSessionRegistry,
     private val conversationMessageRepository: ConversationMessageRepository,
     private val sessionQuestionRepository: SessionQuestionRepository,
@@ -282,28 +276,13 @@ class ConversationEngine(
     }
 
     /**
-     * Transitions the session to [newState]:
-     * 1. Updates Redis memory state (InterviewWebSocketHandler reads this for connect/reconnect)
-     * 2. Sends STATE_CHANGE WebSocket frame
-     *
-     * NOTE: The memory write here is the LAST remaining InterviewMemory dependency
-     * in ConversationEngine. It exists because InterviewWebSocketHandler.onConnect()
-     * reads memory.state to distinguish first-connect from reconnect. This will be
-     * removed when the WS handler is migrated to brain-only state tracking.
+     * Transitions the session to [newState] by sending a STATE_CHANGE WebSocket frame.
+     * Brain state is derived from interviewGoals.completed — no separate state storage needed.
      */
     suspend fun transition(sessionId: UUID, newState: InterviewState) {
         val stateName = InterviewState.toString(newState)
-        try {
-            redisMemoryService.updateMemory(sessionId) { mem ->
-                mem.copy(state = stateName)
-            }
-            registry.sendMessage(sessionId, OutboundMessage.StateChange(state = stateName))
-            log.info("Session {} transitioned to {}", sessionId, stateName)
-        } catch (e: Exception) {
-            // Memory update may fail if memory key expired — still send WS state change
-            registry.sendMessage(sessionId, OutboundMessage.StateChange(state = stateName))
-            log.warn("Memory state update failed for session {} (state={}), WS sent: {}", sessionId, stateName, e.message)
-        }
+        registry.sendMessage(sessionId, OutboundMessage.StateChange(state = stateName))
+        log.info("Session {} transitioned to {}", sessionId, stateName)
     }
 
     /**

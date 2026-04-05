@@ -14,9 +14,7 @@ import com.aiinterview.interview.model.Question
 import com.aiinterview.interview.repository.ConversationMessageRepository
 import com.aiinterview.interview.repository.InterviewSessionRepository
 import com.aiinterview.interview.repository.SessionQuestionRepository
-import com.aiinterview.interview.service.InterviewMemory
 import com.aiinterview.interview.service.QuestionService
-import com.aiinterview.interview.service.RedisMemoryService
 import com.aiinterview.interview.ws.OutboundMessage
 import com.aiinterview.interview.ws.WsSessionRegistry
 import com.aiinterview.report.service.ReportService
@@ -29,13 +27,11 @@ import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
 import reactor.core.publisher.Flux
 import reactor.core.publisher.Mono
-import java.time.Instant
 import java.time.OffsetDateTime
 import java.util.UUID
 
 class ConversationEngineTest {
 
-    private val redisMemoryService = mockk<RedisMemoryService>(relaxed = true)
     private val registry = mockk<WsSessionRegistry>(relaxed = true)
     private val messageRepository = mockk<ConversationMessageRepository>()
     private val sessionQuestionRepository = mockk<SessionQuestionRepository>(relaxed = true)
@@ -50,7 +46,6 @@ class ConversationEngineTest {
     private val brainFlowGuard = mockk<BrainFlowGuard>(relaxed = true)
 
     private val engine = ConversationEngine(
-        redisMemoryService = redisMemoryService,
         registry = registry,
         conversationMessageRepository = messageRepository,
         sessionQuestionRepository = sessionQuestionRepository,
@@ -73,8 +68,6 @@ class ConversationEngineTest {
 
     @Test
     fun `transition sends STATE_CHANGE WS message`() {
-        coEvery { redisMemoryService.updateMemory(sessionId, any()) } returns buildMemory("CANDIDATE_RESPONDING")
-
         runTest {
             engine.transition(sessionId, InterviewState.CandidateResponding)
         }
@@ -106,9 +99,6 @@ class ConversationEngineTest {
             type = "CODING", difficulty = "MEDIUM", category = "CODING",
         )
 
-        // Mock memory update (transition still writes to memory)
-        coEvery { redisMemoryService.updateMemory(sessionId, any()) } returns buildMemory("QUESTION_PRESENTED")
-
         // Mock message persistence
         every { messageRepository.save(any<ConversationMessage>()) } returns Mono.just(
             ConversationMessage(sessionId = sessionId, role = "AI", content = "test")
@@ -137,17 +127,4 @@ class ConversationEngineTest {
         }
     }
 
-    // ── helpers ───────────────────────────────────────────────────────────────
-
-    private fun buildMemory(state: String) = InterviewMemory(
-        sessionId = sessionId,
-        userId = userId,
-        state = state,
-        category = "CODING",
-        personality = "friendly_mentor",
-        currentQuestion = null,
-        candidateAnalysis = null,
-        createdAt = Instant.now(),
-        lastActivityAt = Instant.now(),
-    )
 }
