@@ -1,5 +1,6 @@
 package com.aiinterview.report.service
 
+import com.aiinterview.conversation.brain.BrainService
 import com.aiinterview.interview.model.InterviewSession
 import com.aiinterview.interview.repository.InterviewSessionRepository
 import com.aiinterview.interview.repository.SessionQuestionRepository
@@ -34,6 +35,7 @@ import java.util.UUID
 @Service
 class ReportService(
     private val evaluationAgent: EvaluationAgent,
+    private val brainService: BrainService,
     private val redisMemoryService: RedisMemoryService,
     private val registry: WsSessionRegistry,
     private val evaluationReportRepository: EvaluationReportRepository,
@@ -81,13 +83,12 @@ class ReportService(
             return existing.id
         }
 
-        // 1. Load memory
-        val memory = try {
-            redisMemoryService.getMemory(sessionId)
-        } catch (e: Exception) {
-            log.error("Cannot generate report — memory missing for session {}: {}", sessionId, e.message)
-            throw e
-        }
+        // 1. Load brain (single source of truth)
+        val brain = brainService.getBrainOrNull(sessionId)
+            ?: run {
+                log.error("Cannot generate report — brain missing for session {}", sessionId)
+                throw RuntimeException("Brain not found for session $sessionId")
+            }
 
         // 2. Load session from DB
         val session = withContext(Dispatchers.IO) {
@@ -97,8 +98,8 @@ class ReportService(
             throw NoSuchElementException("Session $sessionId not found")
         }
 
-        // 3. Call EvaluationAgent (returns both text feedback AND numeric scores)
-        val evalResult = evaluationAgent.evaluate(memory)
+        // 3. Call EvaluationAgent (brain is the ONLY state source)
+        val evalResult = evaluationAgent.evaluate(brain)
 
         // 4. Compute weighted overall score from LLM-generated scores (8 dimensions)
         val s = evalResult.scores
@@ -132,7 +133,7 @@ class ReportService(
             evaluationReportRepository.save(
                 EvaluationReport(
                     sessionId            = sessionId,
-                    userId               = memory.userId,
+                    userId               = brain.userId,
                     overallScore         = BigDecimal(overallScore).setScale(2, RoundingMode.HALF_UP),
                     problemSolvingScore  = BigDecimal(s.problemSolving).setScale(2, RoundingMode.HALF_UP),
                     algorithmScore       = BigDecimal(s.algorithmChoice).setScale(2, RoundingMode.HALF_UP),
@@ -147,7 +148,7 @@ class ReportService(
                     suggestions          = suggestionsJson,
                     narrativeSummary     = evalResult.narrativeSummary,
                     dimensionFeedback    = dimensionFeedbackJson,
-                    hintsUsed            = memory.hintsGiven,
+                    hintsUsed            = brain.hintsGiven,
                     nextSteps            = nextStepsJson,
                     completedAt          = now,
                 ),
@@ -168,9 +169,9 @@ class ReportService(
 
         // 8. Increment usage counter
         try {
-            usageLimitService.incrementUsage(memory.userId)
+            usageLimitService.incrementUsage(brain.userId)
         } catch (e: Exception) {
-            log.warn("Failed to increment usage for user {}: {}", memory.userId, e.message)
+            log.warn("Failed to increment usage for user {}: {}", brain.userId, e.message)
         }
 
         // 9. Send SESSION_END over WebSocket

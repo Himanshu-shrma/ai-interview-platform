@@ -5,6 +5,7 @@ import com.fasterxml.jackson.annotation.JsonIgnoreProperties
 import java.time.Instant
 import java.util.UUID
 
+@Deprecated("Replaced by InterviewerBrain. Do not add new readers. Will be removed after all consumers migrate.")
 @JsonIgnoreProperties(ignoreUnknown = true)
 data class InterviewMemory(
     val sessionId: UUID,

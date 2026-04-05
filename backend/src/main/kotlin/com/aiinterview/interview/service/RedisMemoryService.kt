@@ -22,6 +22,7 @@ import java.util.UUID
 class SessionNotFoundException(sessionId: UUID) :
     RuntimeException("Session memory not found: $sessionId (session may have expired or never been initialized)")
 
+@Deprecated("Replaced by InterviewerBrain via BrainService. Do not add new readers.")
 @Service
 class RedisMemoryService(
     private val redisTemplate: ReactiveStringRedisTemplate,

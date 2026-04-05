@@ -1,11 +1,12 @@
 package com.aiinterview.report
 
+import com.aiinterview.conversation.brain.BrainService
+import com.aiinterview.conversation.brain.InterviewQuestion
+import com.aiinterview.conversation.brain.InterviewerBrain
 import com.aiinterview.interview.model.InterviewSession
 import com.aiinterview.interview.repository.InterviewSessionRepository
 import com.aiinterview.interview.repository.QuestionRepository
 import com.aiinterview.interview.repository.SessionQuestionRepository
-import com.aiinterview.interview.service.EvalScores
-import com.aiinterview.interview.service.InterviewMemory
 import com.aiinterview.interview.service.RedisMemoryService
 import com.aiinterview.interview.ws.OutboundMessage
 import com.aiinterview.interview.ws.WsSessionRegistry
@@ -27,25 +28,25 @@ import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import reactor.core.publisher.Mono
-import java.math.BigDecimal
-import java.time.Instant
 import java.time.OffsetDateTime
 import java.util.UUID
 
 class ReportServiceTest {
 
-    private val evaluationAgent           = mockk<EvaluationAgent>()
-    private val redisMemoryService        = mockk<RedisMemoryService>()
-    private val registry                  = mockk<WsSessionRegistry>(relaxed = true)
+    private val evaluationAgent            = mockk<EvaluationAgent>()
+    private val brainService               = mockk<BrainService>()
+    private val redisMemoryService         = mockk<RedisMemoryService>(relaxed = true)
+    private val registry                   = mockk<WsSessionRegistry>(relaxed = true)
     private val evaluationReportRepository = mockk<EvaluationReportRepository>()
     private val interviewSessionRepository = mockk<InterviewSessionRepository>()
-    private val sessionQuestionRepository = mockk<SessionQuestionRepository>()
-    private val questionRepository        = mockk<QuestionRepository>()
-    private val usageLimitService         = mockk<UsageLimitService>(relaxed = true)
-    private val objectMapper              = jacksonObjectMapper()
+    private val sessionQuestionRepository  = mockk<SessionQuestionRepository>()
+    private val questionRepository         = mockk<QuestionRepository>()
+    private val usageLimitService          = mockk<UsageLimitService>(relaxed = true)
+    private val objectMapper               = jacksonObjectMapper()
 
     private val service = ReportService(
         evaluationAgent            = evaluationAgent,
+        brainService               = brainService,
         redisMemoryService         = redisMemoryService,
         registry                   = registry,
         evaluationReportRepository = evaluationReportRepository,
@@ -61,25 +62,16 @@ class ReportServiceTest {
     private val userId    = UUID.randomUUID()
     private val reportId  = UUID.randomUUID()
 
-    private val memory = InterviewMemory(
-        sessionId         = sessionId,
-        userId            = userId,
-        state             = "EVALUATING",
-        category          = "CODING",
-        personality       = "professional",
-        currentQuestion   = null,
-        candidateAnalysis = null,
-        evalScores        = EvalScores(
-            problemSolving  = 8.0,
-            algorithmChoice = 7.0,
-            codeQuality     = 6.0,
-            communication   = 9.0,
-            efficiency      = 5.0,
-            testing         = 4.0,
+    private val brain = InterviewerBrain(
+        sessionId = sessionId,
+        userId = userId,
+        interviewType = "CODING",
+        questionDetails = InterviewQuestion(
+            title = "Two Sum", description = "Find two numbers...",
+            difficulty = "MEDIUM", category = "CODING",
         ),
-        hintsGiven        = 0,
-        createdAt         = Instant.now(),
-        lastActivityAt    = Instant.now(),
+        hintsGiven = 0,
+        turnCount = 10,
     )
 
     private val session = InterviewSession(
@@ -119,7 +111,7 @@ class ReportServiceTest {
     @BeforeEach
     fun setUp() {
         coEvery { evaluationReportRepository.findBySessionId(sessionId) } returns Mono.empty()
-        coEvery { redisMemoryService.getMemory(sessionId) } returns memory
+        coEvery { brainService.getBrainOrNull(sessionId) } returns brain
         coEvery { interviewSessionRepository.findById(sessionId) } returns Mono.just(session)
         coEvery { evaluationAgent.evaluate(any()) } returns evalResult
         coEvery { evaluationReportRepository.save(any()) } answers {
@@ -128,7 +120,6 @@ class ReportServiceTest {
         coEvery { interviewSessionRepository.save(any()) } answers {
             Mono.just(firstArg<InterviewSession>())
         }
-        coEvery { redisMemoryService.deleteMemory(sessionId) } returns Unit
     }
 
     @Test

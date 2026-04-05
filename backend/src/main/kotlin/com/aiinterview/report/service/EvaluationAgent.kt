@@ -1,6 +1,10 @@
 package com.aiinterview.report.service
 
-import com.aiinterview.interview.service.InterviewMemory
+import com.aiinterview.conversation.brain.ClaimCorrectness
+import com.aiinterview.conversation.brain.HypothesisStatus
+import com.aiinterview.conversation.brain.InterviewerBrain
+import com.aiinterview.conversation.brain.LinguisticPattern
+import com.aiinterview.conversation.brain.ReasoningPattern
 import com.aiinterview.shared.ai.LlmProviderRegistry
 import com.aiinterview.shared.ai.LlmRequest
 import com.aiinterview.shared.ai.ModelConfig
@@ -136,31 +140,35 @@ class EvaluationAgent(
 
     private val evaluationTimeoutMs = 60_000L
 
-    suspend fun evaluate(memory: InterviewMemory, brain: com.aiinterview.conversation.brain.InterviewerBrain? = null): EvaluationResult {
+    /**
+     * Evaluates the interview using InterviewerBrain as the ONLY state source.
+     * No InterviewMemory dependency — brain contains all signals needed.
+     */
+    suspend fun evaluate(brain: InterviewerBrain): EvaluationResult {
         return try {
             withTimeout(evaluationTimeoutMs) {
-                attemptEvaluation(memory, brain)
+                attemptEvaluation(brain)
             }
         } catch (e: TimeoutCancellationException) {
-            log.error("Evaluation timed out for session {} after {}ms", memory.sessionId, evaluationTimeoutMs)
+            log.error("Evaluation timed out for session {} after {}ms", brain.sessionId, evaluationTimeoutMs)
             defaultResult()
         }
     }
 
-    private suspend fun attemptEvaluation(memory: InterviewMemory, brain: com.aiinterview.conversation.brain.InterviewerBrain? = null): EvaluationResult {
-        val userPrompt = buildUserPrompt(memory) + buildBrainEnrichment(brain)
-        val systemPrompt = systemPromptFor(memory.category)
+    private suspend fun attemptEvaluation(brain: InterviewerBrain): EvaluationResult {
+        val userPrompt = buildUserPrompt(brain) + buildBrainEnrichment(brain)
+        val systemPrompt = systemPromptFor(brain.interviewType)
 
         val raw1 = callLlm(systemPrompt, userPrompt)
         val result1 = raw1?.let { parseResult(it) }
         if (result1 != null) return result1
 
-        log.warn("EvaluationAgent first attempt failed for session {} — retrying", memory.sessionId)
+        log.warn("EvaluationAgent first attempt failed for session {} — retrying", brain.sessionId)
         val raw2 = callLlm(systemPrompt, userPrompt)
         val result2 = raw2?.let { parseResult(it) }
         if (result2 != null) return result2
 
-        log.warn("EvaluationAgent both attempts failed for session {} — using default", memory.sessionId)
+        log.warn("EvaluationAgent both attempts failed for session {} — using default", brain.sessionId)
         return defaultResult()
     }
 
@@ -192,42 +200,44 @@ class EvaluationAgent(
         }
     }
 
-    private fun buildUserPrompt(memory: InterviewMemory): String = buildString {
-        append("Interview Category: ${memory.category}\n")
-        memory.currentQuestion?.let { q ->
-            append("Difficulty: ${q.difficulty}\n")
-            append("Question: ${q.title}\n")
-            append("Description: ${q.description.take(500)}\n")
+    /**
+     * Builds the user prompt from InterviewerBrain — replaces the old InterviewMemory-based prompt.
+     */
+    private fun buildUserPrompt(brain: InterviewerBrain): String = buildString {
+        append("Interview Category: ${brain.interviewType}\n")
+        append("Difficulty: ${brain.questionDetails.difficulty}\n")
+        if (brain.questionDetails.title.isNotBlank()) {
+            append("Question: ${brain.questionDetails.title}\n")
+            append("Description: ${brain.questionDetails.description.take(500)}\n")
         }
 
         append("\nTranscript Summary:\n")
-        if (memory.earlierContext.isNotBlank()) {
-            append(memory.earlierContext)
+        if (brain.earlierContext.isNotBlank()) {
+            append(brain.earlierContext)
             append("\n")
         }
-        memory.rollingTranscript.forEach { turn ->
+        brain.rollingTranscript.forEach { turn ->
             append("${turn.role}: ${turn.content}\n")
         }
 
-        memory.currentCode?.let { code ->
+        brain.currentCode?.let { code ->
             append("\nFinal Code Submitted:\n```\n${code.take(2000)}\n```\n")
         }
 
-        memory.candidateAnalysis?.let { ca ->
-            append("\nCandidate Analysis:\n")
-            ca.approach?.let { append("Approach: $it\n") }
-            ca.correctness?.let { append("Correctness: $it\n") }
-            if (ca.gaps.isNotEmpty()) append("Gaps identified: ${ca.gaps.joinToString(", ")}\n")
+        // Candidate profile summary (replaces old candidateAnalysis)
+        val p = brain.candidateProfile
+        if (p.dataPoints > 0) {
+            append("\nCandidate Profile:\n")
+            append("Overall signal: ${p.overallSignal}\n")
+            append("Thinking style: ${p.thinkingStyle}\n")
+            if (p.avoidancePatterns.isNotEmpty()) append("Avoidance patterns: ${p.avoidancePatterns.joinToString(", ")}\n")
         }
 
-        append("\nHints given: ${memory.hintsGiven}/3\n")
-        if (memory.followUpsAsked.isNotEmpty()) {
-            append("Follow-ups asked: ${memory.followUpsAsked.joinToString(", ")}\n")
-        }
+        append("\nHints given: ${brain.hintsGiven}/3\n")
+        append("Turns: ${brain.turnCount}\n")
     }
 
-    private fun buildBrainEnrichment(brain: com.aiinterview.conversation.brain.InterviewerBrain?): String {
-        if (brain == null) return ""
+    private fun buildBrainEnrichment(brain: InterviewerBrain): String {
         val p = brain.candidateProfile
         val sb = StringBuilder("\n\n=== BRAIN-DERIVED INSIGHTS ===\n")
 
@@ -249,11 +259,11 @@ class EvaluationAgent(
         if (p.selfRepairCount > 2) sb.appendLine("PRODUCTIVE STRUGGLE: ${p.selfRepairCount} self-corrections. Positive signal — reward metacognitive awareness.")
 
         // Reasoning pattern
-        if (p.reasoningPattern == com.aiinterview.conversation.brain.ReasoningPattern.SCHEMA_DRIVEN)
+        if (p.reasoningPattern == ReasoningPattern.SCHEMA_DRIVEN)
             sb.appendLine("REASONING: Schema-driven (expert). +1.0 to algorithm score.")
 
         // Linguistic pattern
-        if (p.linguisticPattern == com.aiinterview.conversation.brain.LinguisticPattern.HEDGED_UNDERSTANDER)
+        if (p.linguisticPattern == LinguisticPattern.HEDGED_UNDERSTANDER)
             sb.appendLine("LINGUISTIC: Hedged understander — low confidence ≠ low competence. Adjust upward.")
 
         // Safety
@@ -264,13 +274,13 @@ class EvaluationAgent(
         if (highBlooms.isNotEmpty()) sb.appendLine("DEPTH: ${highBlooms.entries.joinToString(", ") { "${it.key}=L${it.value}" }}")
 
         // Confirmed/refuted hypotheses
-        brain.hypothesisRegistry.hypotheses.filter { it.status == com.aiinterview.conversation.brain.HypothesisStatus.CONFIRMED }
+        brain.hypothesisRegistry.hypotheses.filter { it.status == HypothesisStatus.CONFIRMED }
             .takeIf { it.isNotEmpty() }?.let { confirmed ->
                 sb.appendLine("CONFIRMED GAPS: ${confirmed.joinToString("; ") { it.claim }}")
             }
 
         // Incorrect claims
-        brain.claimRegistry.claims.filter { it.correctness == com.aiinterview.conversation.brain.ClaimCorrectness.INCORRECT }
+        brain.claimRegistry.claims.filter { it.correctness == ClaimCorrectness.INCORRECT }
             .takeIf { it.isNotEmpty() }?.let { incorrect ->
                 sb.appendLine("INCORRECT CLAIMS: ${incorrect.joinToString("; ") { "T${it.turn}: ${it.claim}" }}")
             }
@@ -279,7 +289,6 @@ class EvaluationAgent(
         sb.appendLine("\nINITIATIVE SCORE (0-10): Did candidate go beyond minimum? Proactive edge cases, voluntary optimizations, genuine curiosity = high.")
         sb.appendLine("LEARNING AGILITY SCORE (0-10): How effectively did candidate learn during interview? Hint generalization, self-correction, good 'why' questions = high.")
 
-        // Phase 4+5 signals
         // ZDP edge topics
         brain.zdpEdge.values.filter { it.canDoWithPrompt && !it.canDoAlone }.takeIf { it.isNotEmpty() }?.let { edge ->
             sb.appendLine("ZDP EDGE (knows with help): ${edge.joinToString(", ") { it.topic }}. Growth areas near current capability.")

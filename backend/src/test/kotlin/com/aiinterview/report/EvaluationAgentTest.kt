@@ -1,7 +1,7 @@
 package com.aiinterview.report
 
-import com.aiinterview.interview.service.EvalScores
-import com.aiinterview.interview.service.InterviewMemory
+import com.aiinterview.conversation.brain.InterviewQuestion
+import com.aiinterview.conversation.brain.InterviewerBrain
 import com.aiinterview.report.service.EvaluationAgent
 import com.aiinterview.shared.ai.LlmProviderRegistry
 import com.aiinterview.shared.ai.LlmResponse
@@ -15,42 +15,32 @@ import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
-import java.time.Instant
 import java.util.UUID
 
 class EvaluationAgentTest {
 
-    private val llm          = mockk<LlmProviderRegistry>()
-    private val modelConfig  = ModelConfig()
+    private val llm = mockk<LlmProviderRegistry>()
+    private val modelConfig = ModelConfig()
     private val objectMapper = jacksonObjectMapper()
 
     private val agent = EvaluationAgent(
-        llm          = llm,
-        modelConfig  = modelConfig,
+        llm = llm,
+        modelConfig = modelConfig,
         objectMapper = objectMapper,
     )
 
-    private val sessionId = UUID.randomUUID()
-
-    private val memory = InterviewMemory(
-        sessionId         = sessionId,
-        userId            = UUID.randomUUID(),
-        state             = "EVALUATING",
-        category          = "CODING",
-        personality       = "professional",
-        currentQuestion   = null,
-        candidateAnalysis = null,
-        evalScores        = EvalScores(
-            problemSolving  = 7.0,
-            algorithmChoice = 6.0,
-            codeQuality     = 5.0,
-            communication   = 8.0,
-            efficiency      = 6.0,
-            testing         = 4.0,
+    private val brain = InterviewerBrain(
+        sessionId = UUID.randomUUID(),
+        userId = UUID.randomUUID(),
+        interviewType = "CODING",
+        questionDetails = InterviewQuestion(
+            title = "Two Sum",
+            description = "Find two numbers that add up to target",
+            difficulty = "MEDIUM",
+            category = "CODING",
         ),
-        hintsGiven        = 1,
-        createdAt         = Instant.now(),
-        lastActivityAt    = Instant.now(),
+        hintsGiven = 1,
+        turnCount = 8,
     )
 
     private fun stubLlm(json: String) {
@@ -79,7 +69,7 @@ class EvaluationAgentTest {
         """.trimIndent()
         stubLlm(json)
 
-        val result = agent.evaluate(memory)
+        val result = agent.evaluate(brain)
 
         assertEquals(2, result.strengths.size)
         assertEquals(1, result.weaknesses.size)
@@ -91,7 +81,7 @@ class EvaluationAgentTest {
 
     @Test
     fun `evaluate retries once on parse failure and returns result`() = runBlocking {
-        val badJson  = "this is not valid json at all"
+        val badJson = "this is not valid json at all"
         val goodJson = """{"strengths":["ok"],"weaknesses":[],"suggestions":[],"narrativeSummary":"good","dimensionFeedback":{}}"""
 
         coEvery { llm.complete(any()) } returnsMany listOf(
@@ -99,7 +89,7 @@ class EvaluationAgentTest {
             LlmResponse(content = goodJson, model = "gpt-4o", provider = "openai"),
         )
 
-        val result = agent.evaluate(memory)
+        val result = agent.evaluate(brain)
 
         assertEquals(listOf("ok"), result.strengths)
     }
@@ -110,7 +100,7 @@ class EvaluationAgentTest {
             content = "{ invalid json }", model = "gpt-4o", provider = "openai",
         )
 
-        val result = agent.evaluate(memory)
+        val result = agent.evaluate(brain)
 
         assertFalse(result.strengths.isEmpty())
         assertFalse(result.narrativeSummary.isBlank())
@@ -121,7 +111,7 @@ class EvaluationAgentTest {
     fun `evaluate prompt includes code context`() = runBlocking {
         stubLlm("""{"strengths":[],"weaknesses":[],"suggestions":[],"narrativeSummary":"ok","dimensionFeedback":{}}""")
 
-        val memoryWithCode = memory.copy(currentCode = "def solution(): pass")
-        agent.evaluate(memoryWithCode)
+        val brainWithCode = brain.copy(currentCode = "def solution(): pass")
+        agent.evaluate(brainWithCode)
     }
 }
