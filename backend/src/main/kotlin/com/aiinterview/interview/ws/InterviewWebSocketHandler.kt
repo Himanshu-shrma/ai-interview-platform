@@ -3,6 +3,7 @@ package com.aiinterview.interview.ws
 import com.aiinterview.code.service.CodeExecutionService
 import com.aiinterview.conversation.ConversationEngine
 import com.aiinterview.conversation.brain.BrainService
+import com.aiinterview.conversation.brain.InterviewerBrain
 import com.aiinterview.conversation.HintGenerator
 import com.aiinterview.conversation.InterviewState
 import com.aiinterview.interview.repository.ConversationMessageRepository
@@ -68,9 +69,6 @@ class InterviewWebSocketHandler(
     }
 
     override fun handle(session: WebSocketSession): Mono<Void> {
-        // Primary: exchange attributes set by WsAuthHandshakeInterceptor.
-        // Fallback: extract sessionId from URI path + lookup userId from auth cache
-        // (exchange attribute propagation to WebSocketSession can fail in some configs).
         val sessionId = session.attributes[ATTR_SESSION_ID] as? UUID
             ?: extractSessionIdFromUri(session)
             ?: run {
@@ -84,9 +82,6 @@ class InterviewWebSocketHandler(
                 return session.close()
             }
 
-        // Register and get the outbound Flux (backed by a Sinks.Many).
-        // Messages pushed via registry.sendMessage() flow through this single send() call,
-        // preventing ByteBuf refCnt issues from multiple session.send() calls.
         val outboundFlux = registry.register(sessionId, session)
 
         val outbound = session.send(
@@ -97,9 +92,6 @@ class InterviewWebSocketHandler(
             .thenMany(
                 session.receive()
                     .flatMap { wsMsg ->
-                        // Extract payload text BEFORE entering the coroutine.
-                        // The ByteBuf backing wsMsg is released after flatMap returns;
-                        // accessing payloadAsText inside mono{} causes refCnt: 0.
                         val text = wsMsg.payloadAsText
                         mono { handleMessage(sessionId, text) }
                     }
@@ -111,7 +103,6 @@ class InterviewWebSocketHandler(
             .doFinally { onDisconnect(sessionId) }
     }
 
-    /** Extract sessionId UUID from the WS URI path: /ws/interview/{sessionId} */
     private fun extractSessionIdFromUri(session: WebSocketSession): UUID? {
         val path = session.handshakeInfo.uri.path
         val segments = path.split("/").filter { it.isNotBlank() }
@@ -148,52 +139,99 @@ class InterviewWebSocketHandler(
             return
         }
 
-        val memoryExists = redisMemoryService.memoryExists(sessionId)
-        if (memoryExists) {
-            val memory = redisMemoryService.getMemory(sessionId)
-            if (memory.state == InterviewState.toString(InterviewState.InterviewStarting)) {
-                // First connect — send INTERVIEW_STARTED, then kick off the opening sequence
+        // Use brain to detect first-connect vs reconnect
+        val brain = brainService.getBrainOrNull(sessionId)
+
+        if (brain != null) {
+            if (brain.turnCount == 0 && brain.rollingTranscript.isEmpty()) {
+                // First connect — brain exists but no turns yet → interview just started
                 registry.sendMessage(
                     sessionId,
-                    OutboundMessage.InterviewStarted(sessionId = sessionId.toString(), state = memory.state)
+                    OutboundMessage.InterviewStarted(sessionId = sessionId.toString(), state = "INTERVIEW_STARTING")
                 )
                 log.info("WS first connect: sessionId={}, userId={}", sessionId, userId)
                 conversationEngine.startInterview(sessionId)
             } else {
-                // Reconnect — send full STATE_SYNC with conversation history
-                handleReconnect(sessionId, memory)
-            }
-        } else if (dbSession != null && dbSession.status == "ACTIVE") {
-            // Redis expired but DB says ACTIVE — try to reconstruct from DB
-            val recovered = redisMemoryService.getMemoryWithFallback(
-                sessionId,
-                interviewSessionRepository,
-                sessionQuestionRepository,
-                conversationMessageRepository,
-                questionRepository,
-            )
-            if (recovered != null) {
-                handleReconnect(sessionId, recovered)
-                log.info("Recovered session {} from DB after Redis miss", sessionId)
-            } else {
-                withContext(Dispatchers.IO) {
-                    interviewSessionRepository.save(dbSession.copy(status = "ABANDONED")).awaitSingle()
-                }
-                registry.sendMessage(sessionId, OutboundMessage.Error("SESSION_EXPIRED", "Session memory expired. Please start a new interview."))
-                log.warn("Redis memory expired for active session {}; marked abandoned", sessionId)
+                // Reconnect — brain has turns, send full state recovery
+                handleReconnectFromBrain(sessionId, brain)
             }
         } else {
-            registry.sendMessage(sessionId, OutboundMessage.Error("SESSION_NOT_FOUND", "Session not found or expired"))
-            log.warn("WS connect with no memory: sessionId={}", sessionId)
+            // No brain — check if memory exists (legacy fallback) or session is ACTIVE in DB
+            val memoryExists = try { redisMemoryService.memoryExists(sessionId) } catch (_: Exception) { false }
+            if (memoryExists) {
+                // Legacy: memory exists but no brain — start interview (will create brain)
+                registry.sendMessage(
+                    sessionId,
+                    OutboundMessage.InterviewStarted(sessionId = sessionId.toString(), state = "INTERVIEW_STARTING")
+                )
+                log.info("WS first connect (legacy memory): sessionId={}", sessionId)
+                conversationEngine.startInterview(sessionId)
+            } else if (dbSession != null && dbSession.status == "ACTIVE") {
+                // Redis expired but DB says ACTIVE — try DB recovery
+                val recovered = try {
+                    redisMemoryService.getMemoryWithFallback(
+                        sessionId, interviewSessionRepository, sessionQuestionRepository,
+                        conversationMessageRepository, questionRepository,
+                    )
+                } catch (_: Exception) { null }
+                if (recovered != null) {
+                    handleReconnectFromDb(sessionId, recovered)
+                    log.info("Recovered session {} from DB after Redis miss", sessionId)
+                } else {
+                    withContext(Dispatchers.IO) {
+                        interviewSessionRepository.save(dbSession.copy(status = "ABANDONED")).awaitSingle()
+                    }
+                    registry.sendMessage(sessionId, OutboundMessage.Error("SESSION_EXPIRED", "Session memory expired. Please start a new interview."))
+                    log.warn("Redis memory expired for active session {}; marked abandoned", sessionId)
+                }
+            } else {
+                registry.sendMessage(sessionId, OutboundMessage.Error("SESSION_NOT_FOUND", "Session not found or expired"))
+                log.warn("WS connect with no brain or memory: sessionId={}", sessionId)
+            }
         }
     }
 
     /**
-     * Sends STATE_SYNC with full interview state on WS reconnect.
-     * Loads conversation history from DB + current state from Redis.
+     * Sends STATE_SYNC from Brain state on WS reconnect.
+     * Brain is the primary state source. Messages loaded from DB.
      */
-    private suspend fun handleReconnect(sessionId: UUID, memory: com.aiinterview.interview.service.InterviewMemory) {
-        // Load recent messages from DB (reversed to chronological order)
+    private suspend fun handleReconnectFromBrain(sessionId: UUID, brain: InterviewerBrain) {
+        val recentMessages = try {
+            withContext(Dispatchers.IO) {
+                conversationMessageRepository.findRecentBySessionId(sessionId, 50)
+                    .collectList().awaitSingle()
+            }.reversed()
+        } catch (e: Exception) {
+            log.warn("Failed to load messages for reconnect session {}: {}", sessionId, e.message)
+            emptyList()
+        }
+
+        val isCodingType = brain.interviewType.uppercase() in setOf("CODING", "DSA")
+
+        val stateSync = OutboundMessage.StateSync(
+            state                = "QUESTION_PRESENTED",
+            currentQuestionIndex = 0,
+            totalQuestions       = 1,
+            currentQuestion      = QuestionSnapshot(
+                title = brain.questionDetails.title,
+                description = brain.questionDetails.description,
+            ),
+            currentCode          = brain.currentCode,
+            programmingLanguage  = brain.programmingLanguage,
+            hintsGiven           = brain.hintsGiven,
+            messages             = recentMessages.map { MessageSnapshot(role = it.role, content = it.content) },
+            showCodeEditor       = isCodingType || !brain.currentCode.isNullOrBlank(),
+        )
+
+        registry.sendMessage(sessionId, stateSync)
+        log.info("WS reconnected with STATE_SYNC (brain): sessionId={}, turns={}, messages={}", sessionId, brain.turnCount, recentMessages.size)
+    }
+
+    /**
+     * Legacy reconnect from DB-recovered InterviewMemory.
+     * Used only when brain is missing but DB session is ACTIVE.
+     */
+    private suspend fun handleReconnectFromDb(sessionId: UUID, memory: com.aiinterview.interview.service.InterviewMemory) {
         val recentMessages = try {
             withContext(Dispatchers.IO) {
                 conversationMessageRepository.findRecentBySessionId(sessionId, 50)
@@ -230,7 +268,7 @@ class InterviewWebSocketHandler(
         )
 
         registry.sendMessage(sessionId, stateSync)
-        log.info("WS reconnected with STATE_SYNC: sessionId={}, state={}, messages={}", sessionId, memory.state, recentMessages.size)
+        log.info("WS reconnected with STATE_SYNC (db-recovery): sessionId={}, state={}, messages={}", sessionId, memory.state, recentMessages.size)
     }
 
     // ── Message Routing ───────────────────────────────────────────────────────
@@ -248,7 +286,6 @@ class InterviewWebSocketHandler(
         when (type) {
             "PING" -> {
                 registry.sendMessage(sessionId, OutboundMessage.Pong())
-                // Persist heartbeat to DB for abandoned session detection
                 codeScope.launch {
                     try {
                         val session = interviewSessionRepository.findById(sessionId).awaitSingleOrNull()
@@ -264,7 +301,6 @@ class InterviewWebSocketHandler(
             "CANDIDATE_MESSAGE" -> {
                 val msg = objectMapper.treeToValue(tree, InboundMessage.CandidateMessage::class.java)
 
-                // ── Input validation ──
                 if (msg.text.isNullOrBlank()) {
                     registry.sendMessage(sessionId, OutboundMessage.Error("INVALID_MESSAGE", "Message cannot be empty"))
                     return
@@ -279,20 +315,19 @@ class InterviewWebSocketHandler(
                         return
                     }
                 }
-                // ── Rate limiting ──
                 if (isRateLimited(sessionId)) {
                     registry.sendMessage(sessionId, OutboundMessage.Error("RATE_LIMITED", "Please wait before sending another message"))
                     return
                 }
 
-                // Sync code snapshot from editor into memory (if provided)
+                // Sync code snapshot into brain (if provided)
                 msg.codeSnapshot?.let { snap ->
                     if (snap.hasMeaningfulCode && !snap.content.isNullOrBlank()) {
                         try {
-                            redisMemoryService.updateMemory(sessionId) { mem ->
-                                mem.copy(
+                            brainService.updateBrain(sessionId) { b ->
+                                b.copy(
                                     currentCode = snap.content,
-                                    programmingLanguage = snap.language ?: mem.programmingLanguage,
+                                    programmingLanguage = snap.language ?: b.programmingLanguage,
                                 )
                             }
                         } catch (e: Exception) {
@@ -325,17 +360,19 @@ class InterviewWebSocketHandler(
 
             "CODE_UPDATE" -> {
                 val msg = objectMapper.treeToValue(tree, InboundMessage.CodeUpdate::class.java)
-                redisMemoryService.updateMemory(sessionId) { mem ->
-                    mem.copy(currentCode = msg.code, programmingLanguage = msg.language)
-                }
                 // Sync code to brain for AI code awareness
-                try { brainService.updateBrain(sessionId) { b -> b.copy(currentCode = msg.code, programmingLanguage = msg.language) } } catch (e: Exception) { log.warn("Failed to sync code to brain for session={}: {}", sessionId, e.message) }
+                try {
+                    brainService.updateBrain(sessionId) { b ->
+                        b.copy(currentCode = msg.code, programmingLanguage = msg.language)
+                    }
+                } catch (e: Exception) {
+                    log.warn("Failed to sync code to brain for session={}: {}", sessionId, e.message)
+                }
             }
 
             "REQUEST_HINT" -> {
                 try {
-                    val memory = redisMemoryService.getMemory(sessionId)
-                    hintGenerator.generateHint(memory)
+                    hintGenerator.generateHint(sessionId)
                 } catch (e: Exception) {
                     log.error("Failed to generate hint for session {}: {}", sessionId, e.message)
                     registry.sendMessage(sessionId, OutboundMessage.Error("HINT_ERROR", "Failed to generate hint"))
@@ -345,7 +382,6 @@ class InterviewWebSocketHandler(
             "END_INTERVIEW" -> {
                 val msg = objectMapper.treeToValue(tree, InboundMessage.EndInterview::class.java)
                 log.info("END_INTERVIEW from {}: reason={}", sessionId, msg.reason)
-                // Transitions to Evaluating → fires report generation → sends SESSION_END via WS
                 conversationEngine.forceEndInterview(sessionId)
             }
 

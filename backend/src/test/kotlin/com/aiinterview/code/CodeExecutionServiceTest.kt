@@ -10,9 +10,8 @@ import com.aiinterview.interview.model.Question
 import com.aiinterview.interview.model.SessionQuestion
 import com.aiinterview.interview.repository.QuestionRepository
 import com.aiinterview.interview.repository.SessionQuestionRepository
-import com.aiinterview.interview.service.EvalScores
-import com.aiinterview.interview.service.InterviewMemory
-import com.aiinterview.interview.service.RedisMemoryService
+import com.aiinterview.conversation.brain.InterviewQuestion
+import com.aiinterview.conversation.brain.InterviewerBrain
 import com.aiinterview.interview.ws.OutboundMessage
 import com.aiinterview.interview.ws.WsSessionRegistry
 import com.fasterxml.jackson.databind.ObjectMapper
@@ -26,32 +25,28 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import reactor.core.publisher.Mono
-import java.time.Instant
 import java.util.UUID
 
 class CodeExecutionServiceTest {
 
     private val judge0Client             = mockk<Judge0Client>()
     private val registry                 = mockk<WsSessionRegistry>(relaxed = true)
-    private val redisMemoryService       = mockk<RedisMemoryService>(relaxed = true)
     private val sessionQuestionRepository = mockk<SessionQuestionRepository>()
     private val questionRepository        = mockk<QuestionRepository>()
     private val codeSubmissionRepository  = mockk<CodeSubmissionRepository>()
     private val conversationEngine        = mockk<ConversationEngine>(relaxed = true)
     private val objectMapper              = ObjectMapper()
-
-    private val brainService: BrainService = mockk(relaxed = true)
+    private val brainService              = mockk<BrainService>(relaxed = true)
 
     private val service = CodeExecutionService(
         judge0Client             = judge0Client,
         registry                 = registry,
-        redisMemoryService       = redisMemoryService,
         sessionQuestionRepository = sessionQuestionRepository,
         questionRepository        = questionRepository,
         codeSubmissionRepository  = codeSubmissionRepository,
         conversationEngine        = conversationEngine,
-        objectMapper              = objectMapper,
         brainService              = brainService,
+        objectMapper              = objectMapper,
     )
 
     private val sessionId         = UUID.randomUUID()
@@ -59,23 +54,16 @@ class CodeExecutionServiceTest {
     private val questionId        = UUID.randomUUID()
     private val sessionQuestionId = UUID.randomUUID()
 
-    private val memory = InterviewMemory(
-        sessionId  = sessionId,
-        userId     = userId,
-        state      = "CODING_CHALLENGE",
-        category   = "CODING",
-        personality = "professional",
-        currentQuestion = null,
-        candidateAnalysis = null,
-        evalScores = EvalScores(),
-        createdAt  = Instant.now(),
-        lastActivityAt = Instant.now(),
+    private val brain = InterviewerBrain(
+        sessionId = sessionId,
+        userId = userId,
+        interviewType = "CODING",
+        questionDetails = InterviewQuestion(title = "Test", description = "desc", difficulty = "EASY", category = "CODING"),
     )
 
     @BeforeEach
     fun setUp() {
-        coEvery { redisMemoryService.getMemory(sessionId) } returns memory
-        coEvery { redisMemoryService.updateMemory(sessionId, any()) } returns memory
+        coEvery { brainService.getBrainOrNull(sessionId) } returns brain
     }
 
     // ── runCode ───────────────────────────────────────────────────────────────

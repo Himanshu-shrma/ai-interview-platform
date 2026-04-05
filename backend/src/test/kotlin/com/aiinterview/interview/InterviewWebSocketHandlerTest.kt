@@ -4,9 +4,10 @@ import com.aiinterview.code.service.CodeExecutionService
 import com.aiinterview.conversation.ConversationEngine
 import com.aiinterview.conversation.HintGenerator
 import com.aiinterview.conversation.brain.BrainService
+import com.aiinterview.conversation.brain.InterviewQuestion
+import com.aiinterview.conversation.brain.InterviewerBrain
 import com.aiinterview.interview.repository.ConversationMessageRepository
 import com.aiinterview.interview.repository.InterviewSessionRepository
-import com.aiinterview.interview.service.InterviewMemory
 import com.aiinterview.interview.service.RedisMemoryService
 import com.aiinterview.interview.ws.ATTR_SESSION_ID
 import com.aiinterview.interview.ws.ATTR_USER_ID
@@ -29,7 +30,6 @@ import org.springframework.web.reactive.socket.WebSocketMessage
 import org.springframework.web.reactive.socket.WebSocketSession
 import reactor.core.publisher.Mono
 import reactor.core.publisher.Sinks
-import java.time.Instant
 import java.util.UUID
 
 class InterviewWebSocketHandlerTest {
@@ -41,7 +41,7 @@ class InterviewWebSocketHandlerTest {
     }
 
     private val registry                    = mockk<WsSessionRegistry>(relaxed = true)
-    private val memoryService               = mockk<RedisMemoryService>()
+    private val memoryService               = mockk<RedisMemoryService>(relaxed = true)
     private val conversationEngine          = mockk<ConversationEngine>(relaxed = true)
     private val hintGenerator               = mockk<HintGenerator>(relaxed = true)
     private val codeExecutionService        = mockk<CodeExecutionService>(relaxed = true)
@@ -76,10 +76,9 @@ class InterviewWebSocketHandlerTest {
     // ── connect / reconnect ───────────────────────────────────────────────────
 
     @Test
-    fun `connect with memory in INTERVIEW_STARTING state sends INTERVIEW_STARTED`() {
-        coEvery { memoryService.memoryExists(sessionId) } returns true
-        coEvery { memoryService.getMemory(sessionId) } returns buildMemory("INTERVIEW_STARTING")
-        coEvery { registry.sendMessage(sessionId, any()) } returns true
+    fun `connect with brain at turn 0 sends INTERVIEW_STARTED`() {
+        val freshBrain = buildBrain(turnCount = 0, emptyTranscript = true)
+        coEvery { brainService.getBrainOrNull(sessionId) } returns freshBrain
 
         inboundSink.tryEmitComplete()
         handler.handle(wsSession).block()
@@ -90,9 +89,9 @@ class InterviewWebSocketHandlerTest {
     }
 
     @Test
-    fun `connect with no existing memory sends SESSION_NOT_FOUND error`() {
+    fun `connect with no brain and no memory sends SESSION_NOT_FOUND`() {
+        coEvery { brainService.getBrainOrNull(sessionId) } returns null
         coEvery { memoryService.memoryExists(sessionId) } returns false
-        coEvery { registry.sendMessage(sessionId, any()) } returns true
 
         inboundSink.tryEmitComplete()
         handler.handle(wsSession).block()
@@ -105,18 +104,15 @@ class InterviewWebSocketHandlerTest {
     }
 
     @Test
-    fun `reconnect with existing memory sends STATE_CHANGE`() {
-        coEvery { memoryService.memoryExists(sessionId) } returns true
-        coEvery { memoryService.getMemory(sessionId) } returns buildMemory("CANDIDATE_RESPONSE")
-        coEvery { registry.sendMessage(sessionId, any()) } returns true
+    fun `reconnect with brain at turn 5 sends STATE_SYNC`() {
+        val existingBrain = buildBrain(turnCount = 5, emptyTranscript = false)
+        coEvery { brainService.getBrainOrNull(sessionId) } returns existingBrain
 
         inboundSink.tryEmitComplete()
         handler.handle(wsSession).block()
 
         coVerify {
-            registry.sendMessage(sessionId, match {
-                it is OutboundMessage.StateChange && it.state == "CANDIDATE_RESPONSE"
-            })
+            registry.sendMessage(sessionId, match { it is OutboundMessage.StateSync })
         }
     }
 
@@ -124,8 +120,8 @@ class InterviewWebSocketHandlerTest {
 
     @Test
     fun `PING message returns PONG`() {
+        coEvery { brainService.getBrainOrNull(sessionId) } returns null
         coEvery { memoryService.memoryExists(sessionId) } returns false
-        coEvery { registry.sendMessage(sessionId, any()) } returns true
 
         inboundSink.tryEmitNext(mockMessage("""{"type":"PING"}"""))
         inboundSink.tryEmitComplete()
@@ -137,24 +133,23 @@ class InterviewWebSocketHandlerTest {
     // ── CODE_UPDATE ──────────────────────────────────────────────────────────
 
     @Test
-    fun `CODE_UPDATE persists code snapshot in Redis memory`() {
+    fun `CODE_UPDATE syncs code to brain`() {
+        coEvery { brainService.getBrainOrNull(sessionId) } returns null
         coEvery { memoryService.memoryExists(sessionId) } returns false
-        coEvery { registry.sendMessage(sessionId, any()) } returns true
-        coEvery { memoryService.updateMemory(sessionId, any()) } returns buildMemory("CODING")
 
         inboundSink.tryEmitNext(mockMessage("""{"type":"CODE_UPDATE","code":"val x = 1","language":"kotlin"}"""))
         inboundSink.tryEmitComplete()
         handler.handle(wsSession).block()
 
-        coVerify { memoryService.updateMemory(sessionId, any()) }
+        coVerify { brainService.updateBrain(sessionId, any()) }
     }
 
     // ── END_INTERVIEW ────────────────────────────────────────────────────────
 
     @Test
     fun `END_INTERVIEW triggers forceEndInterview on conversation engine`() {
+        coEvery { brainService.getBrainOrNull(sessionId) } returns null
         coEvery { memoryService.memoryExists(sessionId) } returns false
-        coEvery { registry.sendMessage(sessionId, any()) } returns true
 
         inboundSink.tryEmitNext(mockMessage("""{"type":"END_INTERVIEW","reason":"CANDIDATE_ENDED"}"""))
         inboundSink.tryEmitComplete()
@@ -167,8 +162,8 @@ class InterviewWebSocketHandlerTest {
 
     @Test
     fun `unparseable message sends ERROR and continues`() {
+        coEvery { brainService.getBrainOrNull(sessionId) } returns null
         coEvery { memoryService.memoryExists(sessionId) } returns false
-        coEvery { registry.sendMessage(sessionId, any()) } returns true
 
         inboundSink.tryEmitNext(mockMessage("""not valid json at all"""))
         inboundSink.tryEmitComplete()
@@ -181,8 +176,8 @@ class InterviewWebSocketHandlerTest {
 
     @Test
     fun `session is registered on connect and deregistered on disconnect`() {
+        coEvery { brainService.getBrainOrNull(sessionId) } returns null
         coEvery { memoryService.memoryExists(sessionId) } returns false
-        coEvery { registry.sendMessage(sessionId, any()) } returns true
 
         inboundSink.tryEmitComplete()
         handler.handle(wsSession).block()
@@ -195,7 +190,7 @@ class InterviewWebSocketHandlerTest {
 
     @Test
     fun `missing ATTR_SESSION_ID closes session immediately`() {
-        every { wsSession.attributes } returns mutableMapOf<String, Any>()  // no sessionId
+        every { wsSession.attributes } returns mutableMapOf<String, Any>()
 
         handler.handle(wsSession).block()
 
@@ -204,16 +199,15 @@ class InterviewWebSocketHandlerTest {
 
     // ── helpers ──────────────────────────────────────────────────────────────
 
-    private fun buildMemory(state: String) = InterviewMemory(
-        sessionId         = sessionId,
-        userId            = userId,
-        state             = state,
-        category          = "CODING",
-        personality       = "friendly",
-        currentQuestion   = null,
-        candidateAnalysis = null,
-        createdAt         = Instant.now(),
-        lastActivityAt    = Instant.now(),
+    private fun buildBrain(turnCount: Int, emptyTranscript: Boolean) = InterviewerBrain(
+        sessionId = sessionId,
+        userId = userId,
+        interviewType = "CODING",
+        questionDetails = InterviewQuestion(title = "Two Sum", description = "Find two numbers...", difficulty = "MEDIUM", category = "CODING"),
+        turnCount = turnCount,
+        rollingTranscript = if (emptyTranscript) emptyList() else listOf(
+            com.aiinterview.conversation.brain.BrainTranscriptTurn(role = "AI", content = "Hello"),
+        ),
     )
 
     private fun mockMessage(text: String): WebSocketMessage =

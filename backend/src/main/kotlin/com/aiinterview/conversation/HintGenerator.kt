@@ -1,7 +1,8 @@
 package com.aiinterview.conversation
 
-import com.aiinterview.interview.service.InterviewMemory
-import com.aiinterview.interview.service.RedisMemoryService
+import com.aiinterview.conversation.brain.BrainService
+import com.aiinterview.conversation.brain.InterviewerBrain
+import com.aiinterview.conversation.brain.computeBrainInterviewState
 import com.aiinterview.interview.ws.OutboundMessage
 import com.aiinterview.interview.ws.WsSessionRegistry
 import com.aiinterview.shared.ai.LlmProviderRegistry
@@ -9,6 +10,7 @@ import com.aiinterview.shared.ai.LlmRequest
 import com.aiinterview.shared.ai.ModelConfig
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Component
+import java.util.UUID
 
 private const val MAX_HINTS = 3
 
@@ -19,11 +21,17 @@ data class HintResult(
     val refused: Boolean = false,
 )
 
+/**
+ * Generates context-aware hints from InterviewerBrain.
+ * Reads: brain.hintsGiven, brain.candidateProfile.anxietyLevel,
+ * brain.questionDetails, brain.hintOutcomes, brain.interviewGoals.
+ * Zero InterviewMemory dependency.
+ */
 @Component
 class HintGenerator(
     private val llm: LlmProviderRegistry,
     private val modelConfig: ModelConfig,
-    private val redisMemoryService: RedisMemoryService,
+    private val brainService: BrainService,
     private val registry: WsSessionRegistry,
 ) {
     private val log = LoggerFactory.getLogger(HintGenerator::class.java)
@@ -39,10 +47,24 @@ class HintGenerator(
         private val DEDUCTIONS = mapOf(1 to 0.5, 2 to 1.0, 3 to 1.5)
     }
 
-    suspend fun generateHint(memory: InterviewMemory): HintResult {
-        if (memory.hintsGiven >= MAX_HINTS) {
+    /**
+     * Generates a hint using Brain as the sole state source.
+     * Accepts sessionId — loads brain internally.
+     */
+    suspend fun generateHint(sessionId: UUID): HintResult {
+        val brain = brainService.getBrainOrNull(sessionId)
+        if (brain == null) {
+            log.warn("Brain not found for hint request: session={}", sessionId)
             registry.sendMessage(
-                memory.sessionId,
+                sessionId,
+                OutboundMessage.HintDelivered(hint = "Unable to generate hint.", level = 0, hintsRemaining = 0, refused = true),
+            )
+            return HintResult(hint = "", level = 0, hintsRemaining = 0, refused = true)
+        }
+
+        if (brain.hintsGiven >= MAX_HINTS) {
+            registry.sendMessage(
+                sessionId,
                 OutboundMessage.HintDelivered(
                     hint = "You've used all available hints for this question.",
                     level = 0,
@@ -50,30 +72,25 @@ class HintGenerator(
                     refused = true,
                 ),
             )
-            log.debug("Hint refused for session {} — limit reached", memory.sessionId)
+            log.debug("Hint refused for session {} — limit reached", sessionId)
             return HintResult(hint = "", level = 0, hintsRemaining = 0, refused = true)
         }
 
-        val level = memory.hintsGiven + 1
-        val userPrompt = buildUserPrompt(memory, level)
+        val level = brain.hintsGiven + 1
+        val userPrompt = buildUserPrompt(brain, level)
         val hint = callLlm(userPrompt) ?: "Think carefully about the problem constraints."
 
-        val deduction = DEDUCTIONS[level] ?: 0.0
-        val updated = redisMemoryService.updateMemory(memory.sessionId) { mem ->
-            mem.copy(
-                hintsGiven = mem.hintsGiven + 1,
-                evalScores = mem.evalScores.copy(
-                    problemSolving = (mem.evalScores.problemSolving - deduction).coerceAtLeast(0.0),
-                ),
-            )
+        // Update brain: increment hintsGiven
+        brainService.updateBrain(sessionId) { b ->
+            b.copy(hintsGiven = b.hintsGiven + 1)
         }
 
-        val hintsRemaining = MAX_HINTS - updated.hintsGiven
+        val hintsRemaining = MAX_HINTS - level
         registry.sendMessage(
-            memory.sessionId,
+            sessionId,
             OutboundMessage.HintDelivered(hint = hint, level = level, hintsRemaining = hintsRemaining),
         )
-        log.debug("Hint level {} delivered for session {}, remaining={}", level, memory.sessionId, hintsRemaining)
+        log.debug("Hint level {} delivered for session {}, remaining={}", level, sessionId, hintsRemaining)
         return HintResult(hint, level, hintsRemaining)
     }
 
@@ -92,15 +109,36 @@ class HintGenerator(
         null
     }
 
-    private fun buildUserPrompt(memory: InterviewMemory, level: Int): String = buildString {
-        memory.currentQuestion?.let { q ->
+    private fun buildUserPrompt(brain: InterviewerBrain, level: Int): String = buildString {
+        // Question context
+        val q = brain.questionDetails
+        if (q.title.isNotBlank()) {
             append("Question: ${q.title}\n")
-            q.optimalApproach?.let { append("Optimal approach (context only, do not reveal): $it\n") }
+            if (q.optimalApproach.isNotBlank()) {
+                append("Optimal approach (context only, do not reveal): ${q.optimalApproach}\n")
+            }
         }
-        memory.candidateAnalysis?.let { ca ->
-            ca.approach?.let { append("Candidate's approach: $it\n") }
-            if (ca.gaps.isNotEmpty()) append("Known gaps: ${ca.gaps.joinToString(", ")}\n")
+
+        // Anxiety-aware tone
+        val anxiety = brain.candidateProfile.anxietyLevel
+        when {
+            anxiety > 0.7f -> append("\nThe candidate is showing HIGH anxiety. Lead with reassurance before the technical hint. Keep the tone calm.\n")
+            anxiety > 0.4f -> append("\nThe candidate shows moderate anxiety. Be encouraging.\n")
         }
+
+        // Phase context
+        val state = computeBrainInterviewState(brain, 30)
+        when (state.currentPhaseLabel) {
+            "APPROACH" -> append("This is an APPROACH-phase hint. Guide their thinking, do not reveal algorithm names.\n")
+            "CODING" -> append("This is a CODING-phase hint. Focus on debugging and implementation direction.\n")
+        }
+
+        // Previous hints (don't repeat)
+        if (brain.hintOutcomes.isNotEmpty()) {
+            val prev = brain.hintOutcomes.joinToString("; ") { "L${it.hintLevel}: ${it.conceptTaught}" }
+            append("Previous hints given: $prev. Do NOT repeat these angles.\n")
+        }
+
         append("\nProvide a Level $level hint.")
     }
 }

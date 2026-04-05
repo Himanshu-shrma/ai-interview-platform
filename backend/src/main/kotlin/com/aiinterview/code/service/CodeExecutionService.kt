@@ -13,7 +13,6 @@ import com.aiinterview.conversation.brain.BrainService
 import com.aiinterview.conversation.brain.IntendedAction
 import com.aiinterview.interview.repository.QuestionRepository
 import com.aiinterview.interview.repository.SessionQuestionRepository
-import com.aiinterview.interview.service.RedisMemoryService
 import com.aiinterview.interview.ws.OutboundMessage
 import com.aiinterview.interview.ws.TestResult
 import com.aiinterview.interview.ws.WsSessionRegistry
@@ -34,7 +33,6 @@ import java.util.UUID
 class CodeExecutionService(
     private val judge0Client: Judge0Client,
     private val registry: WsSessionRegistry,
-    private val redisMemoryService: RedisMemoryService,
     private val sessionQuestionRepository: SessionQuestionRepository,
     private val questionRepository: QuestionRepository,
     private val codeSubmissionRepository: CodeSubmissionRepository,
@@ -70,9 +68,13 @@ class CodeExecutionService(
                 ),
             )
 
-            // Keep memory.currentCode in sync
-            redisMemoryService.updateMemory(sessionId) { mem ->
-                mem.copy(currentCode = code, programmingLanguage = language)
+            // Keep brain.currentCode in sync
+            try {
+                brainService.updateBrain(sessionId) { b ->
+                    b.copy(currentCode = code, programmingLanguage = language)
+                }
+            } catch (e: Exception) {
+                log.debug("Failed to sync code to brain for session {}: {}", sessionId, e.message)
             }
         } catch (e: Exception) {
             log.error("Code execution failed for session {}: {}", sessionId, e.message)
@@ -110,7 +112,9 @@ class CodeExecutionService(
         val testCases     = parseTestCases(testCasesJson)
         log.info("Submit: question='{}' testCases={} session={}", question?.title, testCases.size, sessionId)
 
-        val memory = try { redisMemoryService.getMemory(sessionId) } catch (e: Exception) {
+        // Get userId from brain
+        val brain = brainService.getBrainOrNull(sessionId)
+        if (brain == null) {
             registry.sendMessage(sessionId, OutboundMessage.Error("SESSION_ERROR", "Session not found"))
             return
         }
@@ -118,7 +122,6 @@ class CodeExecutionService(
         // Run all test cases concurrently
         val testResults = coroutineScope {
             if (testCases.isEmpty()) {
-                // No test cases — single run with no stdin
                 val deferred = async {
                     runSingleTestCase(code, languageId, stdin = null, expected = null)
                 }
@@ -140,7 +143,7 @@ class CodeExecutionService(
             codeSubmissionRepository.save(
                 CodeSubmission(
                     sessionQuestionId = sessionQuestionId,
-                    userId            = memory.userId,
+                    userId            = brain.userId,
                     code              = code,
                     language          = language,
                     status            = status,
@@ -160,9 +163,13 @@ class CodeExecutionService(
             ).awaitSingle()
         }
 
-        // Update memory with latest code
-        redisMemoryService.updateMemory(sessionId) { mem ->
-            mem.copy(currentCode = code, programmingLanguage = language)
+        // Update brain with latest code
+        try {
+            brainService.updateBrain(sessionId) { b ->
+                b.copy(currentCode = code, programmingLanguage = language)
+            }
+        } catch (e: Exception) {
+            log.debug("Failed to sync code to brain for session {}: {}", sessionId, e.message)
         }
 
         // Send result to client
@@ -180,7 +187,6 @@ class CodeExecutionService(
         log.info("Code submit session={} status={} passed={}/{}", sessionId, status, testResults.count { it.passed }, testResults.size)
 
         // Queue brain action based on test results
-        val brain = try { brainService.getBrainOrNull(sessionId) } catch (_: Exception) { null }
         if (brain != null) {
             val passed = testResults.count { it.passed }
             val total = testResults.size
@@ -282,7 +288,6 @@ class CodeExecutionService(
         val a = actual.trim()
         val e = expected.trim()
         if (a == e) return true
-        // Normalize: remove brackets, quotes, split, sort, compare
         val normalize = { s: String ->
             s.removePrefix("[").removeSuffix("]")
                 .removePrefix("{").removeSuffix("}")
