@@ -13,6 +13,7 @@ import com.aiinterview.interview.model.ConversationMessage
 import com.aiinterview.interview.repository.ConversationMessageRepository
 import com.aiinterview.interview.repository.InterviewSessionRepository
 import com.aiinterview.interview.repository.SessionQuestionRepository
+import com.aiinterview.interview.service.InterviewConfig
 import com.aiinterview.interview.service.QuestionService
 import com.aiinterview.interview.service.RedisMemoryService
 import com.aiinterview.interview.ws.OutboundMessage
@@ -45,6 +46,10 @@ import java.util.concurrent.ConcurrentHashMap
  * - TheAnalyst for background analysis (fire-and-forget)
  * - TheStrategist for meta-cognitive review (every 5 turns)
  * - BrainFlowGuard for safety rules
+ *
+ * [redisMemoryService] is retained ONLY for transition() state writes
+ * (InterviewWebSocketHandler reads memory.state for connect/reconnect).
+ * All data reads come from Brain or DB. No memory reads in this class.
  *
  * [reportService] uses @Lazy as a safety guard against Spring init ordering issues.
  */
@@ -107,9 +112,6 @@ class ConversationEngine(
         persistCandidateMessage(sessionId, content)
         brainService.appendTranscriptTurn(sessionId, "CANDIDATE", content)
 
-        // Also persist to old memory for report generation compatibility
-        try { redisMemoryService.appendTranscriptTurn(sessionId, "CANDIDATE", content) } catch (e: Exception) { log.debug("Non-critical operation failed: {}", e.message) }
-
         transition(sessionId, InterviewState.CandidateResponding)
 
         // Compute interview state from objectives
@@ -155,28 +157,45 @@ class ConversationEngine(
 
     /**
      * Called on first WebSocket connect (when memory state == INTERVIEW_STARTING).
-     * Initializes brain and sends opening greeting.
+     * Reads session data from DB (not InterviewMemory), initializes brain, sends greeting.
      */
     suspend fun startInterview(sessionId: UUID) {
-        val memory = try {
-            redisMemoryService.getMemory(sessionId)
-        } catch (e: Exception) {
-            log.error("Cannot start interview — memory missing for {}: {}", sessionId, e.message)
+        // Load session from DB — the single source of truth
+        val session = withContext(Dispatchers.IO) {
+            sessionRepository.findById(sessionId).awaitSingleOrNull()
+        }
+        if (session == null) {
+            log.error("Cannot start interview — session not found in DB: {}", sessionId)
             registry.sendMessage(sessionId, OutboundMessage.Error("SESSION_ERROR", "Session not found"))
             return
         }
 
+        val config = try {
+            objectMapper.readValue(session.config ?: "{}", InterviewConfig::class.java)
+        } catch (e: Exception) {
+            log.error("Cannot parse session config for {}: {}", sessionId, e.message)
+            registry.sendMessage(sessionId, OutboundMessage.Error("SESSION_ERROR", "Invalid session config"))
+            return
+        }
+
+        // Load the first question for this session
+        val firstSq = withContext(Dispatchers.IO) {
+            sessionQuestionRepository.findBySessionIdOrderByOrderIndex(sessionId)
+                .next().awaitSingleOrNull()
+        }
+        val questionDto = firstSq?.let {
+            withContext(Dispatchers.IO) {
+                questionService.getQuestionById(it.questionId)
+            }.toInternalDto(objectMapper)
+        }
+
+        val category = config.category.name
+        val isCodingType = category in setOf("CODING", "DSA")
+        val isBehavioral = category == "BEHAVIORAL"
+
         transition(sessionId, InterviewState.QuestionPresented)
 
-        // Build opening message with ACTUAL question (no hallucination risk)
-        val q = memory.currentQuestion
-        val questionTitle = q?.title ?: "Interview Question"
-        val questionDesc = q?.description ?: ""
-
-        val isCodingType = memory.category.uppercase() in setOf("CODING", "DSA")
-        val isBehavioral = memory.category.uppercase() == "BEHAVIORAL"
-
-        val greeting = when (memory.personality.uppercase()) {
+        val greeting = when (config.personality.uppercase()) {
             "FAANG_SENIOR" -> "Hey. Let's get started."
             "FRIENDLY_MENTOR", "FRIENDLY" -> "Hey! Great to meet you."
             "STARTUP_ENGINEER", "STARTUP" -> "Hey, welcome."
@@ -198,39 +217,38 @@ class ConversationEngine(
             registry.sendMessage(sessionId, OutboundMessage.StateChange(state = "CODING_CHALLENGE"))
         }
 
-        // Initialize brain
+        // Initialize brain from DB session data (NOT from InterviewMemory)
         try {
-            val q = memory.currentQuestion
             val question = InterviewQuestion(
-                questionId = q?.id?.toString() ?: "",
-                title = q?.title ?: "", description = q?.description ?: "",
-                optimalApproach = q?.optimalApproach ?: "",
-                difficulty = q?.difficulty ?: "MEDIUM", category = memory.category,
+                questionId = questionDto?.id?.toString() ?: "",
+                title = questionDto?.title ?: "",
+                description = questionDto?.description ?: "",
+                optimalApproach = questionDto?.optimalApproach ?: "",
+                difficulty = questionDto?.difficulty ?: "MEDIUM",
+                category = category,
             )
-            val goals = BrainObjectivesRegistry.forCategory(memory.category)
-            val durationMinutes = try {
-                val session = withContext(Dispatchers.IO) { sessionRepository.findById(sessionId).awaitSingleOrNull() }
-                session?.config?.let { objectMapper.readValue(it, com.aiinterview.interview.service.InterviewConfig::class.java).durationMinutes } ?: 45
-            } catch (_: Exception) { 45 }
+            val goals = BrainObjectivesRegistry.forCategory(category)
             brainService.initBrain(
-                sessionId = sessionId, userId = memory.userId,
-                interviewType = memory.category, question = question, goals = goals,
-                personality = memory.personality, targetCompany = memory.targetCompany,
-                experienceLevel = memory.experienceLevel, programmingLanguage = memory.programmingLanguage,
-                configuredDurationMinutes = durationMinutes,
+                sessionId = sessionId,
+                userId = session.userId,
+                interviewType = category,
+                question = question,
+                goals = goals,
+                personality = config.personality,
+                targetCompany = config.targetCompany,
+                experienceLevel = config.experienceLevel,
+                programmingLanguage = config.programmingLanguage,
+                configuredDurationMinutes = config.durationMinutes,
             )
-            log.info("Brain initialized for session {} — question='{}' type={}", sessionId, question.title, memory.category)
+            log.info("Brain initialized for session {} — question='{}' type={}", sessionId, question.title, category)
             if (question.title.isBlank()) log.error("CRITICAL: Question title is blank for session {}", sessionId)
             if (question.description.isBlank()) log.error("CRITICAL: Question description is blank for session {}", sessionId)
-
-            // problem_shared is marked by TheAnalyst after TheConductor presents the problem on turn 1
-            // (no longer marked here — greeting only, no problem dump)
         } catch (e: Exception) {
             log.error("Brain init failed for {}: {}", sessionId, e.message)
         }
 
-        // Persist opening to transcript
-        redisMemoryService.appendTranscriptTurn(sessionId, "AI", openingMessage)
+        // Persist opening to brain transcript + DB
+        brainService.appendTranscriptTurn(sessionId, "AI", openingMessage)
         try {
             withContext(Dispatchers.IO) {
                 conversationMessageRepository.save(
@@ -265,8 +283,13 @@ class ConversationEngine(
 
     /**
      * Transitions the session to [newState]:
-     * 1. Updates Redis memory with the new state string
+     * 1. Updates Redis memory state (InterviewWebSocketHandler reads this for connect/reconnect)
      * 2. Sends STATE_CHANGE WebSocket frame
+     *
+     * NOTE: The memory write here is the LAST remaining InterviewMemory dependency
+     * in ConversationEngine. It exists because InterviewWebSocketHandler.onConnect()
+     * reads memory.state to distinguish first-connect from reconnect. This will be
+     * removed when the WS handler is migrated to brain-only state tracking.
      */
     suspend fun transition(sessionId: UUID, newState: InterviewState) {
         val stateName = InterviewState.toString(newState)
@@ -277,20 +300,35 @@ class ConversationEngine(
             registry.sendMessage(sessionId, OutboundMessage.StateChange(state = stateName))
             log.info("Session {} transitioned to {}", sessionId, stateName)
         } catch (e: Exception) {
-            log.error("Failed to transition session {} to {}: {}", sessionId, stateName, e.message)
+            // Memory update may fail if memory key expired — still send WS state change
+            registry.sendMessage(sessionId, OutboundMessage.StateChange(state = stateName))
+            log.warn("Memory state update failed for session {} (state={}), WS sent: {}", sessionId, stateName, e.message)
         }
     }
 
     /**
      * Transitions to the next question in a multi-question interview.
+     * Reads question data from DB, updates brain state directly.
      */
     suspend fun transitionToNextQuestion(sessionId: UUID) {
-        val memory = redisMemoryService.getMemory(sessionId)
-        val nextIndex = memory.currentQuestionIndex + 1
+        val brain = brainService.getBrainOrNull(sessionId)
+        if (brain == null) {
+            log.error("Brain not found for session {} during question transition", sessionId)
+            forceEndInterview(sessionId)
+            return
+        }
 
-        val sessionQuestions = sessionQuestionRepository
-            .findBySessionIdOrderByOrderIndex(sessionId)
-            .collectList().awaitSingle()
+        val sessionQuestions = withContext(Dispatchers.IO) {
+            sessionQuestionRepository.findBySessionIdOrderByOrderIndex(sessionId)
+                .collectList().awaitSingle()
+        }
+
+        // Determine next question index from brain's current state
+        // Brain doesn't track questionIndex directly — count completed question cycles
+        val currentIndex = sessionQuestions.indexOfFirst { sq ->
+            sq.questionId.toString() == brain.questionDetails.questionId
+        }.coerceAtLeast(0)
+        val nextIndex = currentIndex + 1
 
         if (nextIndex >= sessionQuestions.size) {
             log.warn("No more questions for session {} (index={}), proceeding to evaluation", sessionId, nextIndex)
@@ -299,16 +337,11 @@ class ConversationEngine(
         }
 
         val nextSq = sessionQuestions[nextIndex]
-        val nextQuestion = questionService.getQuestionById(nextSq.questionId).toInternalDto(objectMapper)
+        val nextQuestion = withContext(Dispatchers.IO) {
+            questionService.getQuestionById(nextSq.questionId)
+        }.toInternalDto(objectMapper)
 
         transition(sessionId, InterviewState.QuestionTransition)
-        redisMemoryService.updateMemory(sessionId) { mem ->
-            mem.copy(
-                currentQuestion = nextQuestion, currentQuestionIndex = nextIndex,
-                currentCode = null, candidateAnalysis = null, hintsGiven = 0,
-                followUpsAsked = emptyList(), interviewStage = "PROBLEM_PRESENTED",
-            )
-        }
 
         val templates = nextQuestion.codeTemplates?.let { ct ->
             try {
@@ -331,7 +364,8 @@ class ConversationEngine(
         registry.sendMessage(sessionId, OutboundMessage.AiChunk(delta = transitionMessage, done = false))
         registry.sendMessage(sessionId, OutboundMessage.AiChunk(delta = "", done = true))
 
-        redisMemoryService.appendTranscriptTurn(sessionId, "AI", transitionMessage)
+        // Persist to brain transcript + DB
+        brainService.appendTranscriptTurn(sessionId, "AI", transitionMessage)
         try {
             withContext(Dispatchers.IO) {
                 conversationMessageRepository.save(
@@ -347,15 +381,15 @@ class ConversationEngine(
             val q = InterviewQuestion(
                 questionId = nextQuestion.id?.toString() ?: "", title = nextQuestion.title,
                 description = nextQuestion.description, optimalApproach = nextQuestion.optimalApproach ?: "",
-                difficulty = nextQuestion.difficulty ?: "MEDIUM", category = memory.category,
+                difficulty = nextQuestion.difficulty ?: "MEDIUM", category = brain.interviewType,
             )
             brainService.updateBrain(sessionId) { b ->
                 b.copy(questionDetails = q, turnCount = 0,
-                    interviewGoals = BrainObjectivesRegistry.forCategory(memory.category))
+                    interviewGoals = BrainObjectivesRegistry.forCategory(brain.interviewType))
             }
         } catch (e: Exception) { log.debug("Non-critical operation failed: {}", e.message) }
 
-        log.info("Session {} transitioned to question {} of {}", sessionId, nextIndex + 1, memory.totalQuestions)
+        log.info("Session {} transitioned to question {} of {}", sessionId, nextIndex + 1, sessionQuestions.size)
     }
 
     // ── Private helpers ───────────────────────────────────────────────────────
@@ -366,7 +400,7 @@ class ConversationEngine(
         }
         val durationMinutes = session?.config?.let { configJson ->
             try {
-                objectMapper.readValue(configJson, com.aiinterview.interview.service.InterviewConfig::class.java).durationMinutes
+                objectMapper.readValue(configJson, InterviewConfig::class.java).durationMinutes
             } catch (_: Exception) { 45 }
         } ?: 45
         val started = session?.startedAt?.toInstant()
