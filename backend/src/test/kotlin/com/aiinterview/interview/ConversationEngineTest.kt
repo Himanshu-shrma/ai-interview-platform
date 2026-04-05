@@ -92,6 +92,7 @@ class ConversationEngineTest {
         every { messageRepository.save(any<ConversationMessage>()) } returns Mono.just(
             ConversationMessage(sessionId = sessionId, role = "AI", content = "test")
         )
+        every { sessionRepository.findById(sessionId) } returns Mono.empty()
 
         runTest {
             engine.startInterview(sessionId)

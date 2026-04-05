@@ -42,6 +42,7 @@ data class InterviewerBrain(
     val zdpEdge: Map<String, ZdpLevel> = emptyMap(),
     val questionTypeHistory: List<String> = emptyList(),
     val formativeFeedbackGiven: Int = 0,
+    val configuredDurationMinutes: Int = 45,
     val startedAt: Instant = Instant.now(),
     val lastActivityAt: Instant = Instant.now(),
 )

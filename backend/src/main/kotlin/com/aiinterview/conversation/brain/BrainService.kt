@@ -42,6 +42,7 @@ class BrainService(
         targetCompany: String? = null,
         experienceLevel: String? = null,
         programmingLanguage: String? = null,
+        configuredDurationMinutes: Int = 45,
     ): InterviewerBrain {
         val brain = InterviewerBrain(
             sessionId = sessionId,
@@ -53,6 +54,7 @@ class BrainService(
             targetCompany = targetCompany,
             experienceLevel = experienceLevel,
             programmingLanguage = programmingLanguage,
+            configuredDurationMinutes = configuredDurationMinutes,
         )
         saveBrain(sessionId, brain)
         log.debug("Initialized brain for session {}", sessionId)

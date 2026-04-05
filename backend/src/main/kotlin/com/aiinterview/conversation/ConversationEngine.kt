@@ -208,11 +208,16 @@ class ConversationEngine(
                 difficulty = q?.difficulty ?: "MEDIUM", category = memory.category,
             )
             val goals = BrainObjectivesRegistry.forCategory(memory.category)
+            val durationMinutes = try {
+                val session = withContext(Dispatchers.IO) { sessionRepository.findById(sessionId).awaitSingleOrNull() }
+                session?.config?.let { objectMapper.readValue(it, com.aiinterview.interview.service.InterviewConfig::class.java).durationMinutes } ?: 45
+            } catch (_: Exception) { 45 }
             brainService.initBrain(
                 sessionId = sessionId, userId = memory.userId,
                 interviewType = memory.category, question = question, goals = goals,
                 personality = memory.personality, targetCompany = memory.targetCompany,
                 experienceLevel = memory.experienceLevel, programmingLanguage = memory.programmingLanguage,
+                configuredDurationMinutes = durationMinutes,
             )
             log.info("Brain initialized for session {} — question='{}' type={}", sessionId, question.title, memory.category)
             if (question.title.isBlank()) log.error("CRITICAL: Question title is blank for session {}", sessionId)
