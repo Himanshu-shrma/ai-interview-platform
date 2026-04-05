@@ -58,6 +58,27 @@ class BrainObjectivesRegistryTest {
     }
 
     @Test
+    fun `forCategory(CODING) returns exactly 10 required goals`() {
+        val goals = BrainObjectivesRegistry.forCategory("CODING")
+        assertEquals(10, goals.required.size,
+            "CODING must have exactly 10 required goals, got ${goals.required.size}")
+    }
+
+    @Test
+    fun `forCategory(BEHAVIORAL) returns exactly 8 required goals`() {
+        val goals = BrainObjectivesRegistry.forCategory("BEHAVIORAL")
+        assertEquals(8, goals.required.size,
+            "BEHAVIORAL must have exactly 8 required goals, got ${goals.required.size}")
+    }
+
+    @Test
+    fun `forCategory(SYSTEM_DESIGN) returns exactly 8 required goals`() {
+        val goals = BrainObjectivesRegistry.forCategory("SYSTEM_DESIGN")
+        assertEquals(8, goals.required.size,
+            "SYSTEM_DESIGN must have exactly 8 required goals, got ${goals.required.size}")
+    }
+
+    @Test
     fun `all goal types have interview_closed`() {
         for (type in listOf("CODING", "BEHAVIORAL", "SYSTEM_DESIGN")) {
             val goals = BrainObjectivesRegistry.forCategory(type)
