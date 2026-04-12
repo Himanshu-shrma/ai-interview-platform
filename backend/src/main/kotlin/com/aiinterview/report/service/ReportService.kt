@@ -175,6 +175,7 @@ class ReportService(
         // 9. Send SESSION_END over WebSocket
         registry.sendMessage(sessionId, OutboundMessage.SessionEnd(reportId = reportId))
         log.info("Report generated for session={} reportId={} overallScore={}", sessionId, reportId, overallScore)
+        log.info("""{"event":"INTERVIEW_END","session_id":"$sessionId","turn_count":${brain.turnCount},"overall_score":${"%.2f".format(overallScore)},"completion_reason":"CANDIDATE_ENDED"}""")
 
         return reportId
     }

@@ -13,6 +13,8 @@ import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize
 import com.fasterxml.jackson.databind.deser.std.StdDeserializer
+import io.sentry.Sentry
+import io.sentry.SentryLevel
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Component
 import java.util.UUID
@@ -58,7 +60,7 @@ class TheAnalyst(
                 .removePrefix("```json").removePrefix("```")
                 .removeSuffix("```").trim()
 
-            val decision = parseAnalystResponse(cleaned)
+            val decision = parseAnalystResponse(cleaned, sessionId, brain.turnCount)
             applyUpdates(sessionId, decision, brain)
         } catch (e: Exception) {
             log.warn("TheAnalyst failed silently for session={}: {}", sessionId, e.message)
@@ -217,7 +219,7 @@ PSEUDO CODE DETECTION:
     private val failureCount = java.util.concurrent.atomic.AtomicInteger(0)
     private val callCount = java.util.concurrent.atomic.AtomicInteger(0)
 
-    private fun parseAnalystResponse(json: String): AnalystDecision {
+    private fun parseAnalystResponse(json: String, sessionId: UUID, turn: Int): AnalystDecision {
         callCount.incrementAndGet()
         return try {
             objectMapper.readValue(json, AnalystDecision::class.java)
@@ -226,11 +228,20 @@ PSEUDO CODE DETECTION:
             val total = callCount.get()
             val rate = if (total > 0) failures.toFloat() / total else 0f
             log.warn("TheAnalyst full parse failed ({}/{}={:.0f}%): {}", failures, total, rate * 100, e.message)
+            val partial = tryPartialParse(json)
+            val salvaged = listOfNotNull(
+                if (partial.goalsCompleted.isNotEmpty()) "goalsCompleted" else null,
+                if (partial.thoughtThreadAppend.isNotBlank()) "thoughtThreadAppend" else null,
+                if (partial.nextAction != null) "nextAction" else null,
+                if (partial.candidateIntent != null) "candidateIntent" else null,
+            ).size
+            log.warn("""{"event":"ANALYST_PARSE_FAILURE","session_id":"$sessionId","turn":$turn,"failures":$failures,"total":$total,"fields_salvaged":$salvaged,"fields_lost":${4 - salvaged}}""")
+            Sentry.captureMessage("TheAnalyst parse failure — turn $turn", SentryLevel.WARNING)
             if (rate > 0.3f && total > 5) {
                 log.error("TheAnalyst FAILURE RATE HIGH: {}/{} turns failing ({}%). Check LLM provider and JSON schema.",
                     failures, total, (rate * 100).toInt())
             }
-            tryPartialParse(json)
+            partial
         }
     }
 

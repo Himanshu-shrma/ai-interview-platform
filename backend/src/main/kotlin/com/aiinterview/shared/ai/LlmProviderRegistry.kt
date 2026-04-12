@@ -4,6 +4,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
 import org.slf4j.LoggerFactory
+import org.slf4j.MDC
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.stereotype.Component
 
@@ -31,16 +32,24 @@ class LlmProviderRegistry(
         }
     }
 
-    suspend fun complete(request: LlmRequest): LlmResponse = try {
-        retryWithBackoff("complete") {
-            primaryProvider.complete(request)
+    suspend fun complete(request: LlmRequest): LlmResponse {
+        val startMs = System.currentTimeMillis()
+        val response = try {
+            retryWithBackoff("complete") {
+                primaryProvider.complete(request)
+            }
+        } catch (e: LlmProviderException.RateLimitException) {
+            log.warn("Primary provider {} rate limited after retries, trying fallback", primaryProviderName)
+            fallbackProvider?.complete(request) ?: throw e
+        } catch (e: LlmProviderException.ProviderUnavailableException) {
+            log.warn("Primary provider {} unavailable after retries, trying fallback", primaryProviderName)
+            fallbackProvider?.complete(request) ?: throw e
         }
-    } catch (e: LlmProviderException.RateLimitException) {
-        log.warn("Primary provider {} rate limited after retries, trying fallback", primaryProviderName)
-        fallbackProvider?.complete(request) ?: throw e
-    } catch (e: LlmProviderException.ProviderUnavailableException) {
-        log.warn("Primary provider {} unavailable after retries, trying fallback", primaryProviderName)
-        fallbackProvider?.complete(request) ?: throw e
+        val latencyMs = System.currentTimeMillis() - startMs
+        val cost = LlmCostEstimator.estimateCost(request.model, response.usage.promptTokens, response.usage.completionTokens)
+        val sessionId = MDC.get("session_id") ?: ""
+        log.info("""{"event":"LLM_CALL_COMPLETE","session_id":"$sessionId","model":"${request.model}","prompt_tokens":${response.usage.promptTokens},"completion_tokens":${response.usage.completionTokens},"latency_ms":$latencyMs,"estimated_cost_usd":${"%.6f".format(cost)}}""")
+        return response
     }
 
     /**
