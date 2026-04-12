@@ -116,6 +116,17 @@ registry.sendMessage(sessionId, OutboundMessage.AiChunk(delta = token, done = fa
 - Frontend: `DashboardPage` rebuilt with toggleable Recharts `LineChart`, insight cards, rolling average table
 - Percentile SQL: `EvaluationReportRepository.countUsersWithAverageBelow()` + `countDistinctUsers()`
 
+## Report Page Improvements (TASK-P2-03)
+- V20 migration: `feedback TEXT` column on `interview_sessions`
+- `OutcomeController` — `POST /api/v1/outcomes/{sessionId}` stores `OutcomeRequest` JSON (`feltRealistic`, `nps`, `level`) in `interview_sessions.feedback`
+- `ReportPage` 5 additions:
+  1. Score context: "Top N% of [difficulty] interviews" from `platformPercentile`
+  2. Delta banner: "+0.8 from your last interview. Biggest improvement: [dim]" (from `ProgressResponse.sessions` + `mostImproved`)
+  3. Share card: LinkedIn `shareArticle` deep-link with score text (opt-in button)
+  4. Next session CTA: "Try [category] [HARD/MEDIUM] focusing on [needsAttention dimension]" — button pre-fills `/interview/setup`
+  5. Feedback form: 3-question fixed toast (question level / AI fairness / NPS 1-10), dismissible, appears 10s after load
+- `index.html`: `<title>` + OG meta tags for LinkedIn share preview
+
 ## Structured Study Plan (TASK-P2-02)
 - `EvaluationAgent.kt` — `nextSteps` prompt now requires structured JSON: `topic`, `gap`, `evidence` (real transcript quote), `resources` (leetcode/youtube), `estimatedHours`, `priority`
 - `tryPartialParse()` fallback — if full JSON parse fails, extracts fields independently via Jackson tree; recovers result if only `nextSteps` is malformed
