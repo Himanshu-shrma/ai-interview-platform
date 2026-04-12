@@ -116,6 +116,14 @@ registry.sendMessage(sessionId, OutboundMessage.AiChunk(delta = token, done = fa
 - Frontend: `DashboardPage` rebuilt with toggleable Recharts `LineChart`, insight cards, rolling average table
 - Percentile SQL: `EvaluationReportRepository.countUsersWithAverageBelow()` + `countDistinctUsers()`
 
+## Structured Study Plan (TASK-P2-02)
+- `EvaluationAgent.kt` — `nextSteps` prompt now requires structured JSON: `topic`, `gap`, `evidence` (real transcript quote), `resources` (leetcode/youtube), `estimatedHours`, `priority`
+- `tryPartialParse()` fallback — if full JSON parse fails, extracts fields independently via Jackson tree; recovers result if only `nextSteps` is malformed
+- `StudyResourceDto` + updated `NextStepDto` in `ReportDto.kt` — new fields + legacy fields kept for pre-P2-02 DB records
+- `ReportService.parseNextSteps()` — bidirectional fallback: new → old and old → new fields
+- Frontend `StudyPlanCard` component: priority badge, evidence blockquote, resource link buttons (open new tab), "Practice this topic →" CTA
+- CTA navigates to `/interview/setup` with `state.topic` → pre-fills `background` field in `InterviewSetupPage`
+
 ## Cross-Session Memory (TASK-P1-02)
 - `CandidateMemoryProfile` (Redis key: none — stored in Postgres `candidate_memory_profiles` table)
 - `CandidateMemoryService.upsertFromReport()` — called from ReportService after every session
