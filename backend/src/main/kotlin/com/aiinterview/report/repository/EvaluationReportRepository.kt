@@ -20,4 +20,23 @@ interface EvaluationReportRepository : ReactiveCrudRepository<EvaluationReport, 
 
     @Query("SELECT COUNT(*) FROM evaluation_reports WHERE user_id = :userId AND deleted_at IS NULL")
     fun countByUserId(userId: UUID): Mono<Long>
+
+    @Query("SELECT * FROM evaluation_reports WHERE user_id = :userId AND deleted_at IS NULL AND status = 'COMPLETED' ORDER BY completed_at ASC")
+    fun findByUserIdOrderByCompletedAtAsc(userId: UUID): Flux<EvaluationReport>
+
+    @Query("SELECT COUNT(DISTINCT user_id) FROM evaluation_reports WHERE deleted_at IS NULL")
+    fun countDistinctUsers(): Mono<Long>
+
+    @Query("""
+        SELECT COUNT(DISTINCT sub.user_id) FROM (
+            SELECT user_id, AVG(overall_score) AS avg_score
+            FROM evaluation_reports
+            WHERE deleted_at IS NULL AND overall_score IS NOT NULL
+            GROUP BY user_id
+        ) sub WHERE sub.avg_score < :avgScore
+    """)
+    fun countUsersWithAverageBelow(avgScore: Double): Mono<Long>
+
+    @Query("SELECT AVG(overall_score) FROM evaluation_reports WHERE user_id = :userId AND deleted_at IS NULL AND overall_score IS NOT NULL")
+    fun findAverageOverallScoreForUser(userId: UUID): Mono<Double>
 }

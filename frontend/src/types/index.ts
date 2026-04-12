@@ -11,6 +11,32 @@ export interface User {
   memoryEnabled: boolean
 }
 
+// ── Progress ──
+
+export interface SessionSummary {
+  sessionId: string
+  completedAt: string
+  overallScore: number
+  category: string
+  difficulty: string
+}
+
+export interface DimensionDelta {
+  dimension: string
+  delta: number
+  sessionCount: number
+}
+
+export interface ProgressResponse {
+  sessions: SessionSummary[]
+  dimensionTrends: Record<string, number[]>
+  rollingAverage: Record<string, number>
+  mostImproved: DimensionDelta | null
+  needsAttention: DimensionDelta | null
+  sessionCount: number
+  platformPercentile: number | null
+}
+
 // ── Memory ──
 
 export interface DerivedInsights {

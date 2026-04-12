@@ -12,6 +12,7 @@ import type {
   OnboardingRequest,
   OnboardingRecommendation,
   DerivedInsights,
+  ProgressResponse,
 } from '@/types'
 
 const api = axios.create({
@@ -59,6 +60,11 @@ export async function resetMemory(): Promise<void> {
 
 export async function setMemoryEnabled(enabled: boolean): Promise<void> {
   await api.patch('/api/v1/users/me/memory-enabled', { enabled })
+}
+
+export async function getProgress(): Promise<ProgressResponse> {
+  const { data } = await api.get<ProgressResponse>('/api/v1/users/me/progress')
+  return data
 }
 
 export async function getStats(): Promise<UserStatsDto> {

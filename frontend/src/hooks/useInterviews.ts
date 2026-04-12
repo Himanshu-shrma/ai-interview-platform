@@ -1,6 +1,6 @@
 import { useQuery, useMutation } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
-import { listSessions, getSession, startSession, getStats, getLanguages, listReports } from '@/lib/api'
+import { listSessions, getSession, startSession, getStats, getLanguages, listReports, getProgress } from '@/lib/api'
 import type { StartSessionRequest } from '@/types'
 
 export function useInterviewList(page = 0) {
@@ -50,6 +50,14 @@ export function useReportList(page = 0, size = 20) {
   return useQuery({
     queryKey: ['reports', page, size],
     queryFn: () => listReports(page, size),
+    staleTime: 60_000,
+  })
+}
+
+export function useProgress() {
+  return useQuery({
+    queryKey: ['progress'],
+    queryFn: () => getProgress(),
     staleTime: 60_000,
   })
 }

@@ -1,12 +1,14 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { format } from 'date-fns'
-import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts'
+import {
+  LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend,
+} from 'recharts'
 import { PageHeader } from '@/components/shared/PageHeader'
 import { CategoryBadge } from '@/components/shared/CategoryBadge'
 import { DifficultyBadge } from '@/components/shared/DifficultyBadge'
 import { ScoreDisplay } from '@/components/shared/ScoreDisplay'
-import { useInterviewList, useUserStats, useReportList } from '@/hooks/useInterviews'
+import { useInterviewList, useUserStats, useProgress } from '@/hooks/useInterviews'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -15,6 +17,25 @@ import { Skeleton } from '@/components/ui/skeleton'
 import type { SessionSummaryDto } from '@/types'
 
 const FREE_TIER_LIMIT = 3
+
+// ── Dimension config ────────────────────────────────────────────────────────
+
+const DIMENSIONS = [
+  { key: 'problemSolving',  label: 'Problem Solving',  color: '#3b82f6' },
+  { key: 'algorithmChoice', label: 'Algorithm',         color: '#8b5cf6' },
+  { key: 'codeQuality',     label: 'Code Quality',      color: '#10b981' },
+  { key: 'communication',   label: 'Communication',     color: '#f59e0b' },
+  { key: 'efficiency',      label: 'Efficiency',        color: '#ef4444' },
+  { key: 'testing',         label: 'Testing',           color: '#6366f1' },
+  { key: 'initiative',      label: 'Initiative',        color: '#14b8a6' },
+  { key: 'learningAgility', label: 'Learning Agility',  color: '#f97316' },
+]
+
+function dimLabel(key: string): string {
+  return DIMENSIONS.find((d) => d.key === key)?.label ?? key
+}
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
 
 function statusBadgeVariant(status: string) {
   switch (status) {
@@ -32,20 +53,18 @@ function statusBadgeVariant(status: string) {
 
 function statusLabel(status: string) {
   switch (status) {
-    case 'ACTIVE':
-      return 'In Progress'
-    case 'PENDING':
-      return 'Pending'
-    default:
-      return status.charAt(0) + status.slice(1).toLowerCase()
+    case 'ACTIVE': return 'In Progress'
+    case 'PENDING': return 'Pending'
+    default: return status.charAt(0) + status.slice(1).toLowerCase()
   }
 }
 
 function formatDuration(secs?: number): string {
   if (!secs) return '-'
-  const mins = Math.round(secs / 60)
-  return `${mins} min`
+  return `${Math.round(secs / 60)} min`
 }
+
+// ── StatsCard ─────────────────────────────────────────────────────────────────
 
 function StatsCard() {
   const { data: stats, isLoading } = useUserStats()
@@ -53,9 +72,7 @@ function StatsCard() {
   if (isLoading) {
     return (
       <Card>
-        <CardHeader>
-          <Skeleton className="h-6 w-32" />
-        </CardHeader>
+        <CardHeader><Skeleton className="h-6 w-32" /></CardHeader>
         <CardContent className="space-y-4">
           <Skeleton className="h-4 w-full" />
           <Skeleton className="h-4 w-3/4" />
@@ -72,9 +89,7 @@ function StatsCard() {
 
   return (
     <Card>
-      <CardHeader>
-        <CardTitle className="text-lg">Your Stats</CardTitle>
-      </CardHeader>
+      <CardHeader><CardTitle className="text-lg">Your Stats</CardTitle></CardHeader>
       <CardContent className="space-y-4">
         <div className="grid grid-cols-3 gap-4 text-center">
           <div>
@@ -102,9 +117,7 @@ function StatsCard() {
             <>
               <div className="flex justify-between text-sm">
                 <span className="text-muted-foreground">Free interviews</span>
-                <span className="font-medium">
-                  {used} of {FREE_TIER_LIMIT} used
-                </span>
+                <span className="font-medium">{used} of {FREE_TIER_LIMIT} used</span>
               </div>
               <Progress
                 value={usagePercent}
@@ -122,7 +135,9 @@ function StatsCard() {
   )
 }
 
-function InterviewRow({ session }: { session: SessionSummaryDto }) {
+// ── InterviewRow ──────────────────────────────────────────────────────────────
+
+function InterviewRow({ session }: Readonly<{ session: SessionSummaryDto }>) {
   const date = session.createdAt ? format(new Date(session.createdAt), 'MMM d, yyyy') : '-'
 
   return (
@@ -145,7 +160,6 @@ function InterviewRow({ session }: { session: SessionSummaryDto }) {
         {session.status === 'COMPLETED' && session.overallScore != null && (
           <ScoreDisplay score={session.overallScore} />
         )}
-
         {session.status === 'COMPLETED' && (
           <Button variant="outline" size="sm" asChild>
             <Link to={`/report/${session.id}`}>View Report</Link>
@@ -200,79 +214,214 @@ function EmptyState() {
   )
 }
 
-function ProgressChart() {
-  const { data: reports } = useReportList(0, 20)
+// ── Progress section ──────────────────────────────────────────────────────────
 
-  if (!reports || reports.length < 2) return null
-
-  const chartData = [...reports]
-    .reverse()
-    .map((r, i) => ({
-      name: `#${i + 1}`,
-      score: r.overallScore,
-      date: format(new Date(r.completedAt), 'MMM d'),
-    }))
-
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="text-lg">Score Trend</CardTitle>
-      </CardHeader>
-      <CardContent>
-        <ResponsiveContainer width="100%" height={200}>
-          <LineChart data={chartData}>
-            <XAxis dataKey="date" tick={{ fontSize: 11 }} />
-            <YAxis domain={[0, 10]} tick={{ fontSize: 11 }} />
-            <Tooltip />
-            <Line
-              type="monotone"
-              dataKey="score"
-              stroke="hsl(221, 83%, 53%)"
-              strokeWidth={2}
-              dot={{ r: 4 }}
-            />
-          </LineChart>
-        </ResponsiveContainer>
-      </CardContent>
-    </Card>
+/**
+ * Multi-dimension progress chart with checkbox toggles, insight cards, and
+ * rolling-average table. Shows an empty state when the user has fewer than 2
+ * completed sessions.
+ */
+function ProgressDashboard() {
+  const { data: progress, isLoading } = useProgress()
+  const [visibleDims, setVisibleDims] = useState<Set<string>>(
+    new Set(DIMENSIONS.map((d) => d.key)),
   )
-}
 
-function DifficultyRecommendation() {
-  const { data: stats } = useUserStats()
-  const { data: reports } = useReportList(0, 5)
-
-  if (!stats || !reports || reports.length < 2) return null
-
-  // Look at the last 3 scores to determine recommendation
-  const recentScores = reports.slice(0, 3).map(r => r.overallScore)
-  const avgRecent = recentScores.reduce((a, b) => a + b, 0) / recentScores.length
-  const lastDifficulty = reports[0]?.difficulty ?? 'MEDIUM'
-
-  let recommendation: string | null = null
-  let description: string | null = null
-
-  if (avgRecent >= 7.5 && lastDifficulty !== 'HARD') {
-    const next = lastDifficulty === 'EASY' ? 'Medium' : 'Hard'
-    recommendation = `Try ${next} difficulty`
-    description = `You're averaging ${avgRecent.toFixed(1)}/10 — time to level up!`
-  } else if (avgRecent < 4 && lastDifficulty !== 'EASY') {
-    const next = lastDifficulty === 'HARD' ? 'Medium' : 'Easy'
-    recommendation = `Try ${next} difficulty`
-    description = `Build your confidence with easier problems first.`
+  if (isLoading) {
+    return (
+      <Card>
+        <CardHeader><Skeleton className="h-6 w-40" /></CardHeader>
+        <CardContent><Skeleton className="h-48 w-full" /></CardContent>
+      </Card>
+    )
   }
 
-  if (!recommendation) return null
+  if (!progress || progress.sessionCount < 2) {
+    return (
+      <Card>
+        <CardHeader><CardTitle className="text-lg">Progress</CardTitle></CardHeader>
+        <CardContent>
+          <p className="text-sm text-muted-foreground py-6 text-center">
+            Complete 2 interviews to see your progress chart.
+          </p>
+        </CardContent>
+      </Card>
+    )
+  }
+
+  // Build chart data: pivot dimensionTrends into [{session:"#1", problemSolving:7, ...}]
+  const maxLen = Math.max(
+    ...Object.values(progress.dimensionTrends).map((arr) => arr.length),
+    0,
+  )
+  const chartData = Array.from({ length: maxLen }, (_, i) => {
+    const point: Record<string, number | string> = {
+      session: `#${i + 1}`,
+    }
+    for (const { key } of DIMENSIONS) {
+      const val = progress.dimensionTrends[key]?.[i]
+      if (val !== undefined) point[key] = parseFloat(val.toFixed(1))
+    }
+    return point
+  })
+
+  function toggleDim(key: string) {
+    setVisibleDims((prev) => {
+      const next = new Set(prev)
+      if (next.has(key)) {
+        if (next.size > 1) next.delete(key) // keep at least one visible
+      } else {
+        next.add(key)
+      }
+      return next
+    })
+  }
+
+  // Dimensions that have data
+  const activeDims = DIMENSIONS.filter((d) => progress.dimensionTrends[d.key])
 
   return (
-    <Card className="border-blue-200 bg-blue-50">
-      <CardContent className="py-4">
-        <p className="font-medium text-sm text-blue-900">{recommendation}</p>
-        <p className="text-xs text-blue-700 mt-1">{description}</p>
-      </CardContent>
-    </Card>
+    <div className="space-y-4">
+      {/* ── Insight cards ── */}
+      <div className="grid gap-4 sm:grid-cols-2">
+        {progress.mostImproved && (
+          <Card className="border-green-200 bg-green-50">
+            <CardContent className="py-4">
+              <p className="text-xs font-semibold uppercase tracking-wide text-green-700 mb-1">
+                Most Improved
+              </p>
+              <p className="font-medium text-green-900">
+                +{progress.mostImproved.delta.toFixed(1)} {dimLabel(progress.mostImproved.dimension)}
+              </p>
+              <p className="text-xs text-green-700 mt-0.5">
+                over last {progress.mostImproved.sessionCount} sessions
+              </p>
+            </CardContent>
+          </Card>
+        )}
+        {progress.needsAttention && (
+          <Card className="border-amber-200 bg-amber-50">
+            <CardContent className="py-4">
+              <p className="text-xs font-semibold uppercase tracking-wide text-amber-700 mb-1">
+                Needs Attention
+              </p>
+              <p className="font-medium text-amber-900">
+                {dimLabel(progress.needsAttention.dimension)}
+                {progress.needsAttention.delta <= 0
+                  ? ': unchanged or declining'
+                  : ': below average'}
+              </p>
+              <p className="text-xs text-amber-700 mt-0.5">
+                avg {(progress.rollingAverage[progress.needsAttention.dimension] ?? 0).toFixed(1)}/10
+                over last {progress.needsAttention.sessionCount} sessions
+              </p>
+            </CardContent>
+          </Card>
+        )}
+        {progress.platformPercentile !== null && (
+          <Card className="border-indigo-200 bg-indigo-50 sm:col-span-2">
+            <CardContent className="py-4">
+              <p className="text-xs font-semibold uppercase tracking-wide text-indigo-700 mb-1">
+                Platform Percentile
+              </p>
+              <p className="font-medium text-indigo-900">
+                Top {100 - progress.platformPercentile}% of all candidates
+              </p>
+            </CardContent>
+          </Card>
+        )}
+      </div>
+
+      {/* ── Multi-line chart ── */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-lg">Score Trends by Dimension</CardTitle>
+        </CardHeader>
+        <CardContent>
+          {/* Dimension toggle checkboxes */}
+          <div className="flex flex-wrap gap-2 mb-4">
+            {activeDims.map(({ key, label, color }) => (
+              <button
+                key={key}
+                type="button"
+                onClick={() => toggleDim(key)}
+                className={[
+                  'flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium transition-opacity',
+                  visibleDims.has(key) ? 'opacity-100' : 'opacity-40',
+                ].join(' ')}
+                style={{ borderColor: color, color }}
+              >
+                <span
+                  className="inline-block h-2 w-2 rounded-full"
+                  style={{ background: color }}
+                />
+                {label}
+              </button>
+            ))}
+          </div>
+
+          <ResponsiveContainer width="100%" height={260}>
+            <LineChart data={chartData}>
+              <XAxis dataKey="session" tick={{ fontSize: 11 }} />
+              <YAxis domain={[0, 10]} tick={{ fontSize: 11 }} width={24} />
+              <Tooltip
+                formatter={(val, name) => [
+                  typeof val === 'number' ? val.toFixed(1) : val,
+                  dimLabel(String(name)),
+                ]}
+              />
+              <Legend
+                formatter={(value: string) => dimLabel(value)}
+                wrapperStyle={{ fontSize: 11 }}
+              />
+              {activeDims
+                .filter(({ key }) => visibleDims.has(key))
+                .map(({ key, color }) => (
+                  <Line
+                    key={key}
+                    type="monotone"
+                    dataKey={key}
+                    stroke={color}
+                    strokeWidth={2}
+                    dot={{ r: 3 }}
+                    activeDot={{ r: 5 }}
+                    connectNulls
+                  />
+                ))}
+            </LineChart>
+          </ResponsiveContainer>
+        </CardContent>
+      </Card>
+
+      {/* ── Rolling average table ── */}
+      {Object.keys(progress.rollingAverage).length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">5-Session Rolling Average</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-2 gap-x-6 gap-y-2 sm:grid-cols-4">
+              {activeDims
+                .filter(({ key }) => progress.rollingAverage[key] !== undefined)
+                .map(({ key, label, color }) => (
+                  <div key={key} className="flex items-center justify-between py-1">
+                    <span className="text-xs text-muted-foreground" style={{ color }}>
+                      {label}
+                    </span>
+                    <span className="text-sm font-semibold tabular-nums">
+                      {(progress.rollingAverage[key] ?? 0).toFixed(1)}
+                    </span>
+                  </div>
+                ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+    </div>
   )
 }
+
+// ── Main page ─────────────────────────────────────────────────────────────────
 
 export default function DashboardPage() {
   const [page, setPage] = useState(0)
@@ -285,8 +434,8 @@ export default function DashboardPage() {
     <div className="min-h-screen bg-background">
       <PageHeader />
 
-      <main className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
-        <h1 className="text-2xl font-bold mb-6">Dashboard</h1>
+      <main className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8 space-y-8">
+        <h1 className="text-2xl font-bold">Dashboard</h1>
 
         <div className="grid gap-6 lg:grid-cols-3">
           {/* Interview history */}
@@ -318,11 +467,15 @@ export default function DashboardPage() {
           </div>
 
           {/* Stats sidebar */}
-          <div className="space-y-6">
+          <div>
             <StatsCard />
-            <DifficultyRecommendation />
-            <ProgressChart />
           </div>
+        </div>
+
+        {/* Full-width progress section */}
+        <div>
+          <h2 className="text-lg font-semibold mb-4">Your Progress</h2>
+          <ProgressDashboard />
         </div>
       </main>
     </div>

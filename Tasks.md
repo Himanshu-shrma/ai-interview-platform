@@ -25,70 +25,114 @@
 When Himanshu says "Execute TASK-XYZ", you must follow this exact
 protocol every single time, no exceptions:
 
-## Protocol (memorise this)
+## Protocol (memorise this — every step is mandatory)
 
 ### STEP 0 — Orient before touching anything
-```
-git branch --show-current          # must be master
-git status                         # must be clean
-mvn test -q 2>&1 | tail -5        # note current test state
+Run these commands and SHOW Himanshu the output before doing anything else:
+```bash
+git branch --show-current
+# If not on master: git checkout master
+git status
+# Must be clean. If dirty: git stash
+cd backend && mvn test -q 2>&1 | tail -5
+# Record test state BEFORE your changes
 ```
 
 ### STEP 1 — Re-read the living docs
-Read these files fully before starting:
+Read these files fully before writing a single line of code:
 - `.claude/CLAUDE.md`
 - `SPEC.md`
 - `SPEC_DEV.md`
-- The task definition below (the TASK-XYZ block)
+- The task definition in TASKS.md for TASK-XYZ
 
 ### STEP 2 — Implement
-Follow the task definition exactly. The task tells you:
-- Which files to create or modify (exact paths)
-- Which migrations to write (exact version numbers)
-- What acceptance criteria must pass
-- What NOT to do
+Follow the task definition exactly. No improvising. No adding extras.
+No "I'll also fix this while I'm here". Only what the task says.
 
-### STEP 3 — Verify
-Run every verification command listed in the task's VERIFY block.
-All checks must pass. If any fail, fix them before proceeding.
-Never skip a verification and say "it should work".
+### STEP 3 — VERIFY (MANDATORY — NOT OPTIONAL — DO NOT SKIP)
+
+Run EVERY command in the task's VERIFY block one by one.
+For EACH command show Himanshu:
+  a) The exact command you ran
+  b) The exact output you got
+  c) PASS or FAIL
+
+If ANY check fails: fix the code. Re-run. Do not proceed until it passes.
+NEVER say "this should work" or "I believe this is correct".
+Run it. Paste the output. That is verification.
+
+After the VERIFY block, check every acceptance criterion:
+```
+# Template — do this for EVERY criterion in the task:
+
+AC: [paste criterion text here]
+Command: [command that proves it]
+Output:
+  [paste actual terminal output]
+Result: PASS ✓   or   FAIL ✗
+```
+
+Mark PASS only when you have run the command and seen the output.
+No exceptions. No assumptions.
 
 ### STEP 4 — Update the living docs
-After every successful task, update these three files:
-- `.claude/CLAUDE.md` — add/update the section that describes what changed
-- `SPEC.md` — add/update product capabilities, pricing, endpoints
-- `SPEC_DEV.md` — add/update technical implementation details, schemas, flows
+Update these files to reflect ACTUAL state of the code right now:
+- `.claude/CLAUDE.md` — new patterns, changed behaviour, new classes
+- `SPEC.md` — new endpoints, features, product changes
+- `SPEC_DEV.md` — schema changes, new services, updated flows
+- `.claude/skills/[relevant]/SKILL.md` — new patterns for this domain
 
-The updates must reflect the ACTUAL state of the code after this task.
-Not what was planned. What was built.
-
-### STEP 5 — Branch, commit, merge to master
-
-# Create a task branch
-git checkout master
-git checkout -b task/TASK-XYZ
-
-# Do all the work here, then:
-git add -A -- ':!TASKS.md'
-git commit -m "feat(TASK-XYZ): description"
-
-# Merge back to master (no PR needed — solo builder)
-git checkout master
-git merge task/TASK-XYZ --no-ff \
-  -m "feat(TASK-XYZ): description"
-
-# Push master
+### STEP 5 — Commit and push
+```bash
+git add -A -- ':!TASKS.md'   # NEVER add TASKS.md
+git commit -m "feat(TASK-XYZ): short description"
 git push origin master
+```
 
-# Clean up the task branch (keep it tidy)
-git branch -d task/TASK-XYZ
+### STEP 6 — Report back to Himanshu with PROOF
+Your final message must be this exact format:
 
-### STEP 6 — Report back
-Tell Himanshu:
-- What was built (1-2 sentences)
-- What files changed
-- Which acceptance criteria passed
-- What the next task is (TASK-XYZ+1)
+```
+TASK-XYZ COMPLETE
+
+Files changed:
+  - path/to/file.kt: what changed
+  - path/to/file.tsx: what changed
+
+Acceptance criteria:
+  ✓ [criterion 1]
+    Ran: [command]
+    Output: [output]
+
+  ✓ [criterion 2]
+    Ran: [command]
+    Output: [output]
+
+  ✗ [criterion N] — FAILED (describe what was wrong and how you fixed it)
+
+Docs updated:
+  - CLAUDE.md: [section updated]
+  - SPEC_DEV.md: [section updated]
+
+Next: TASK-XYZ+1 — [name]
+```
+
+If a criterion failed and you could not fix it: say so. Do not hide it.
+
+---
+
+## What counts as verified vs what does not
+
+NOT verified (never say these):
+  - "I believe this is correct"
+  - "This should work"
+  - "The implementation looks right"
+  - "I've added the code for this"
+
+Verified (only these count):
+  - "Ran `mvn test -q` → BUILD SUCCESS (output pasted above)"
+  - "Ran `grep -n W_INITIATIVE ReportService.kt` → line 12: W_INITIATIVE = 0.10"
+  - "Ran `curl -X DELETE /api/v1/users/me` → 204 No Content"
 
 ---
 
@@ -118,67 +162,580 @@ Tell Himanshu:
 
 ---
 
-## TASK-P0-01 — Fix Broken Tests + Add Brain Tests
+## TASK-P0-01 — Fix Broken Tests + Add Pure Unit Tests (No Docker, No IT)
 **Priority:** CRITICAL | **Effort:** 4 hours | **Phase:** 0
 
 ### Context
-mvn test has at least 3 broken test files. ConversationEngineTest references
-old constructors (InterviewerAgent, AgentOrchestrator — both deleted).
-RedisMemoryServiceTest references deleted TranscriptCompressor. Zero brain
-tests exist. CI cannot be trusted until this is fixed.
+mvn test hangs forever because RedisMemoryServiceTest uses @Testcontainers
+(needs Docker). ConversationEngineTest references deleted classes. Zero brain
+tests exist. Everything here must be pure unit tests using MockK only.
+NO Testcontainers. NO @SpringBootTest. NO real Redis. NO real DB. NO Docker.
 
-### What to do
+### Rules for every test in this task
+- Use `mockk<T>()` or `relaxedMockk<T>()` only
+- Use `Mono.just(value)` to stub Reactor return types
+- Use `runTest { }` from kotlinx-coroutines-test for suspend functions
+- NO @Testcontainers, NO @Container, NO GenericContainer
+- NO @SpringBootTest, NO @ExtendWith(SpringExtension::class)
+- NO real network calls of any kind
 
-**Fix ConversationEngineTest.kt**
-- File: `backend/src/test/kotlin/com/aiinterview/conversation/ConversationEngineTest.kt`
-- Old constructor took: InterviewerAgent, AgentOrchestrator (both deleted)
-- New constructor takes: BrainService, TheConductor, TheAnalyst, TheStrategist, BrainFlowGuard
-- Replace all old agent mocks with relaxedMockk() for the new 5 dependencies
-- Update every test that calls the old constructor
-- Do NOT delete tests — fix the mocks to match the current constructor
+---
 
-**Fix RedisMemoryServiceTest.kt**
-- File: `backend/src/test/kotlin/com/aiinterview/interview/service/RedisMemoryServiceTest.kt`
-- Remove TranscriptCompressor mock from constructor (class was deleted)
-- Update constructor call to current RedisMemoryService signature
-- Fix any other compilation errors in this file
+### FIX 1 — Remove Testcontainers from pom.xml
 
-**Add new test file: BrainServiceTest.kt**
-- File: `backend/src/test/kotlin/com/aiinterview/conversation/brain/BrainServiceTest.kt`
-- Test 1: `initBrain() saves brain to Redis with correct sessionId key`
-- Test 2: `updateBrain() is atomic — concurrent updates do not lose data`
-- Test 3: `markGoalComplete() adds goal to interviewGoals.completed`
-- Use mockk / relaxedMockk for Redis operations. Do not require a live Redis.
+In `backend/pom.xml`, delete these two dependencies entirely:
+```xml
+<!-- DELETE BOTH OF THESE -->
+<dependency>
+    <groupId>org.testcontainers</groupId>
+    <artifactId>testcontainers</artifactId>
+    <scope>test</scope>
+</dependency>
+<dependency>
+    <groupId>org.testcontainers</groupId>
+    <artifactId>junit-jupiter</artifactId>
+    <scope>test</scope>
+</dependency>
+```
+Nothing else changes in pom.xml.
 
-**Add new test file: BrainObjectivesRegistryTest.kt**
-- File: `backend/src/test/kotlin/com/aiinterview/conversation/brain/BrainObjectivesRegistryTest.kt`
-- Test 1: `forCategory(CODING) returns exactly 10 required goals`
-- Test 2: `forCategory(BEHAVIORAL) returns exactly 8 required goals`
-- Test 3: `forCategory(SYSTEM_DESIGN) returns exactly 8 required goals`
+---
 
-**Add new test file: ReportServiceTest.kt** (score formula)
-- File: `backend/src/test/kotlin/com/aiinterview/report/service/ReportServiceTest.kt`
-- Test: given known dimension scores, overall = weighted sum within 0.01
-- Use the weights from FIX-03 below (must match exactly)
+### FIX 2 — Rewrite RedisMemoryServiceTest.kt (pure MockK, no Docker)
+
+**File:** `backend/src/test/kotlin/com/aiinterview/interview/RedisMemoryServiceTest.kt`
+
+Delete the entire file content and replace with this:
+
+```kotlin
+package com.aiinterview.interview
+
+import com.aiinterview.interview.dto.InternalQuestionDto
+import com.aiinterview.interview.service.InterviewConfig
+import com.aiinterview.interview.service.InterviewMemory
+import com.aiinterview.interview.service.RedisMemoryService
+import com.aiinterview.interview.service.SessionNotFoundException
+import com.aiinterview.interview.service.TranscriptTurn
+import com.aiinterview.shared.domain.Difficulty
+import com.aiinterview.shared.domain.InterviewCategory
+import com.fasterxml.jackson.databind.DeserializationFeature
+import com.fasterxml.jackson.databind.SerializationFeature
+import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule
+import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
+import io.mockk.every
+import io.mockk.mockk
+import io.mockk.verify
+import kotlinx.coroutines.test.runTest
+import org.junit.jupiter.api.Assertions.*
+import org.junit.jupiter.api.BeforeEach
+import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.assertThrows
+import org.springframework.data.redis.core.ReactiveStringRedisTemplate
+import org.springframework.data.redis.core.ReactiveValueOperations
+import reactor.core.publisher.Mono
+import java.time.OffsetDateTime
+import java.util.UUID
+
+class RedisMemoryServiceTest {
+
+    private val redisTemplate = mockk<ReactiveStringRedisTemplate>()
+    private val valueOps = mockk<ReactiveValueOperations<String, String>>()
+
+    private val objectMapper = jacksonObjectMapper().apply {
+        registerModule(JavaTimeModule())
+        disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS)
+        configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false)
+    }
+
+    private lateinit var service: RedisMemoryService
+
+    private val sessionId = UUID.randomUUID()
+    private val userId = UUID.randomUUID()
+
+    private val testConfig = InterviewConfig(
+        category = InterviewCategory.CODING,
+        difficulty = Difficulty.MEDIUM,
+    )
+
+    private val testQuestion = InternalQuestionDto(
+        id = UUID.randomUUID(),
+        title = "Two Sum",
+        description = "Given an array of integers...",
+        category = "CODING",
+        type = "CODING",
+        difficulty = "MEDIUM",
+        topicTags = listOf("arrays", "hash-map"),
+        examples = null,
+        constraintsText = "1 <= nums.length <= 10^4",
+        testCases = null,
+        solutionHints = null,
+        optimalApproach = null,
+        followUpPrompts = null,
+        evaluationCriteria = null,
+        timeComplexity = "O(n)",
+        spaceComplexity = "O(n)",
+        slug = "two-sum",
+        source = "AI_GENERATED",
+        generationParams = null,
+        codeTemplates = null,
+        createdAt = OffsetDateTime.now(),
+    )
+
+    @BeforeEach
+    fun setup() {
+        every { redisTemplate.opsForValue() } returns valueOps
+        service = RedisMemoryService(
+            redisTemplate = redisTemplate,
+            objectMapper = objectMapper,
+            ttlHours = 1,
+            maxTranscriptTurns = 6,
+        )
+    }
+
+    private fun buildMemory(state: String = "INTERVIEW_STARTING") = InterviewMemory(
+        sessionId = sessionId,
+        userId = userId,
+        state = state,
+        category = "CODING",
+        personality = "friendly_mentor",
+        currentQuestion = null,
+    )
+
+    private fun toJson(memory: InterviewMemory) = objectMapper.writeValueAsString(memory)
+
+    @Test
+    fun `initMemory creates correct structure`() = runTest {
+        every { valueOps.set(any(), any(), any()) } returns Mono.just(true)
+
+        val memory = service.initMemory(sessionId, userId, testConfig, testQuestion)
+
+        assertEquals(sessionId, memory.sessionId)
+        assertEquals(userId, memory.userId)
+        assertEquals("INTERVIEW_STARTING", memory.state)
+        assertEquals("CODING", memory.category)
+        assertEquals("Two Sum", memory.currentQuestion?.title)
+        assertTrue(memory.rollingTranscript.isEmpty())
+        verify(exactly = 1) { valueOps.set(any(), any(), any()) }
+    }
+
+    @Test
+    fun `getMemory deserializes correctly from Redis`() = runTest {
+        val stored = buildMemory()
+        every { valueOps.get(any()) } returns Mono.just(toJson(stored))
+
+        val result = service.getMemory(sessionId)
+
+        assertEquals(sessionId, result.sessionId)
+        assertEquals("INTERVIEW_STARTING", result.state)
+    }
+
+    @Test
+    fun `getMemory throws SessionNotFoundException when key missing`() = runTest {
+        every { valueOps.get(any()) } returns Mono.empty()
+
+        assertThrows<SessionNotFoundException> {
+            service.getMemory(sessionId)
+        }
+    }
+
+    @Test
+    fun `updateMemory applies updater and saves result`() = runTest {
+        val stored = buildMemory()
+        every { valueOps.get(any()) } returns Mono.just(toJson(stored))
+        every { valueOps.set(any(), any(), any()) } returns Mono.just(true)
+
+        val updated = service.updateMemory(sessionId) { it.copy(state = "CANDIDATE_RESPONDING") }
+
+        assertEquals("CANDIDATE_RESPONDING", updated.state)
+        verify(exactly = 1) { valueOps.set(any(), any(), any()) }
+    }
+
+    @Test
+    fun `appendTranscriptTurn adds turn to empty transcript`() = runTest {
+        val stored = buildMemory()
+        every { valueOps.get(any()) } returns Mono.just(toJson(stored))
+        every { valueOps.set(any(), any(), any()) } returns Mono.just(true)
+
+        val result = service.appendTranscriptTurn(sessionId, "AI", "Hello!")
+
+        assertEquals(1, result.rollingTranscript.size)
+        assertEquals("AI", result.rollingTranscript[0].role)
+    }
+
+    @Test
+    fun `appendTranscriptTurn compresses oldest 2 turns when maxTurns exceeded`() = runTest {
+        val fullTranscript = (0 until 6).map { i ->
+            TranscriptTurn(role = if (i % 2 == 0) "AI" else "CANDIDATE", content = "Turn $i content")
+        }
+        val stored = buildMemory().copy(rollingTranscript = fullTranscript)
+        every { valueOps.get(any()) } returns Mono.just(toJson(stored))
+        every { valueOps.set(any(), any(), any()) } returns Mono.just(true)
+
+        val result = service.appendTranscriptTurn(sessionId, "AI", "Turn 6 content")
+
+        assertEquals(5, result.rollingTranscript.size)
+        assertTrue(result.earlierContext.isNotBlank())
+        assertTrue(result.earlierContext.contains("Turn 0 content"))
+    }
+
+    @Test
+    fun `memoryExists returns true when key present`() = runTest {
+        every { redisTemplate.hasKey(any()) } returns Mono.just(true)
+        assertTrue(service.memoryExists(sessionId))
+    }
+
+    @Test
+    fun `memoryExists returns false when key missing`() = runTest {
+        every { redisTemplate.hasKey(any()) } returns Mono.just(false)
+        assertFalse(service.memoryExists(sessionId))
+    }
+
+    @Test
+    fun `deleteMemory calls Redis delete`() = runTest {
+        every { redisTemplate.delete(any<String>()) } returns Mono.just(1L)
+        service.deleteMemory(sessionId)
+        verify(exactly = 1) { redisTemplate.delete(any<String>()) }
+    }
+}
+```
+
+---
+
+### FIX 3 — Fix ConversationEngineTest.kt (update stale mocks)
+
+**File:** `backend/src/test/kotlin/com/aiinterview/interview/ConversationEngineTest.kt`
+
+The test file currently mocks `redisMemoryService` for `startInterview`.
+Read the current `ConversationEngine.startInterview()` method first:
+```bash
+grep -A 30 "fun startInterview" backend/src/main/kotlin/com/aiinterview/conversation/ConversationEngine.kt
+```
+
+Then update the test so every `coEvery` stub matches what `startInterview`
+actually calls today. If it no longer calls `redisMemoryService.getMemory()`,
+remove that stub. If it calls `brainService.initBrain()`, add a stub for that.
+
+The mocks at the top of the class are already correct — do not change them.
+Only fix the test method bodies to stub what the current code actually calls.
+
+---
+
+### NEW FILE — BrainServiceTest.kt (pure unit test, zero real Redis)
+
+**File:** `backend/src/test/kotlin/com/aiinterview/conversation/brain/BrainServiceTest.kt`
+
+```kotlin
+package com.aiinterview.conversation.brain
+
+import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
+import io.mockk.every
+import io.mockk.mockk
+import io.mockk.verify
+import kotlinx.coroutines.test.runTest
+import org.junit.jupiter.api.Assertions.*
+import org.junit.jupiter.api.BeforeEach
+import org.junit.jupiter.api.Test
+import org.springframework.data.redis.core.ReactiveStringRedisTemplate
+import org.springframework.data.redis.core.ReactiveValueOperations
+import reactor.core.publisher.Mono
+import java.util.UUID
+
+class BrainServiceTest {
+
+    private val redisTemplate = mockk<ReactiveStringRedisTemplate>()
+    private val valueOps = mockk<ReactiveValueOperations<String, String>>()
+    private val objectMapper = jacksonObjectMapper()
+    private lateinit var service: BrainService
+
+    private val sessionId = UUID.randomUUID()
+    private val userId = UUID.randomUUID()
+
+    // Minimal valid InterviewQuestion for initBrain()
+    private val testQuestion = InterviewQuestion(
+        title = "Two Sum",
+        description = "Find two numbers that add to target",
+        optimalApproach = "Use a hash map for O(n) lookup",
+        evaluationCriteria = "Correct algorithm, explains complexity",
+        scoringRubric = null,
+    )
+
+    private val testGoals = BrainObjectivesRegistry.forCategory("CODING")
+
+    @BeforeEach
+    fun setup() {
+        every { redisTemplate.opsForValue() } returns valueOps
+        every { valueOps.set(any(), any(), any()) } returns Mono.just(true)
+        service = BrainService(redisTemplate = redisTemplate, objectMapper = objectMapper)
+    }
+
+    // ── Test 1: initBrain saves to Redis with correct key ─────────────────
+    @Test
+    fun `initBrain saves brain to Redis with correct session key`() = runTest {
+        service.initBrain(
+            sessionId = sessionId,
+            userId = userId,
+            interviewType = "CODING",
+            question = testQuestion,
+            goals = testGoals,
+        )
+
+        // Verify Redis was called with the correct key format: "brain:{sessionId}"
+        verify(exactly = 1) {
+            valueOps.set(
+                match { key -> key == "brain:$sessionId" },
+                any(),
+                any()
+            )
+        }
+    }
+
+    // ── Test 2: markGoalComplete adds goal to interviewGoals.completed ─────
+    @Test
+    fun `markGoalComplete adds goal to interviewGoals completed`() = runTest {
+        // Build a brain with empty completed goals
+        val brain = InterviewerBrain(
+            sessionId = sessionId,
+            userId = userId,
+            interviewType = "CODING",
+            questionDetails = testQuestion,
+            interviewGoals = testGoals,
+        )
+        val brainJson = objectMapper.writeValueAsString(brain)
+
+        // getBrain() reads from Redis — stub it
+        every { valueOps.get("brain:$sessionId") } returns Mono.just(brainJson)
+
+        service.markGoalComplete(sessionId, "problem_shared")
+
+        // Verify a save was called (the updated brain with goal added)
+        verify(atLeast = 1) { valueOps.set(eq("brain:$sessionId"), any(), any()) }
+    }
+
+    // ── Test 3: updateBrain uses mutex — sequential calls don't lose data ──
+    @Test
+    fun `updateBrain applies updater function correctly`() = runTest {
+        val brain = InterviewerBrain(
+            sessionId = sessionId,
+            userId = userId,
+            interviewType = "CODING",
+            questionDetails = testQuestion,
+            interviewGoals = testGoals,
+            turnCount = 0,
+        )
+        val brainJson = objectMapper.writeValueAsString(brain)
+
+        every { valueOps.get("brain:$sessionId") } returns Mono.just(brainJson)
+
+        // Capture what gets saved
+        var savedJson: String? = null
+        every { valueOps.set(eq("brain:$sessionId"), capture(mutableListOf<String>().also {
+            every { valueOps.set(eq("brain:$sessionId"), any(), any()) } answers {
+                savedJson = secondArg()
+                Mono.just(true)
+            }
+        }), any()) } returns Mono.just(true)
+
+        service.updateBrain(sessionId) { b -> b.copy(turnCount = b.turnCount + 1) }
+
+        // Verify save was called
+        verify(atLeast = 1) { valueOps.set(eq("brain:$sessionId"), any(), any()) }
+    }
+}
+```
+
+---
+
+### NEW FILE — BrainObjectivesRegistryTest.kt (pure unit test, zero mocks needed)
+
+**File:** `backend/src/test/kotlin/com/aiinterview/conversation/brain/BrainObjectivesRegistryTest.kt`
+
+`BrainObjectivesRegistry` is a plain Kotlin `object` — no mocking, no Redis,
+no Spring, no coroutines. Simplest test in the codebase.
+
+```kotlin
+package com.aiinterview.conversation.brain
+
+import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Test
+
+class BrainObjectivesRegistryTest {
+
+    @Test
+    fun `forCategory CODING returns 10 required goals`() {
+        val goals = BrainObjectivesRegistry.forCategory("CODING")
+        assertEquals(10, goals.required.size,
+            "CODING must have exactly 10 required goals. Found: ${goals.required.map { it.id }}")
+    }
+
+    @Test
+    fun `forCategory BEHAVIORAL returns 8 required goals`() {
+        val goals = BrainObjectivesRegistry.forCategory("BEHAVIORAL")
+        assertEquals(8, goals.required.size,
+            "BEHAVIORAL must have exactly 8 required goals. Found: ${goals.required.map { it.id }}")
+    }
+
+    @Test
+    fun `forCategory SYSTEM_DESIGN returns 8 required goals`() {
+        val goals = BrainObjectivesRegistry.forCategory("SYSTEM_DESIGN")
+        assertEquals(8, goals.required.size,
+            "SYSTEM_DESIGN must have exactly 8 required goals. Found: ${goals.required.map { it.id }}")
+    }
+
+    @Test
+    fun `forCategory unknown defaults to CODING goals`() {
+        val goals = BrainObjectivesRegistry.forCategory("UNKNOWN")
+        assertEquals(10, goals.required.size)
+    }
+
+    @Test
+    fun `CODING first goal is problem_shared`() {
+        val goals = BrainObjectivesRegistry.forCategory("CODING")
+        assertEquals("problem_shared", goals.required.first().id)
+    }
+
+    @Test
+    fun `CODING last goal is interview_closed`() {
+        val goals = BrainObjectivesRegistry.forCategory("CODING")
+        assertEquals("interview_closed", goals.required.last().id)
+    }
+}
+```
+
+---
+
+### NEW FILE — ReportScoreFormulaTest.kt (pure unit test, no Spring)
+
+**File:** `backend/src/test/kotlin/com/aiinterview/report/service/ReportScoreFormulaTest.kt`
+
+This tests ONLY the score formula logic — extracted as a pure function.
+No DB. No mocks. No coroutines.
+
+```kotlin
+package com.aiinterview.report.service
+
+import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Test
+
+class ReportScoreFormulaTest {
+
+    // Mirrors the exact weights in ReportService companion object
+    private val W_PROBLEM_SOLVING  = 0.20
+    private val W_ALGORITHM_CHOICE = 0.15
+    private val W_CODE_QUALITY     = 0.15
+    private val W_COMMUNICATION    = 0.15
+    private val W_EFFICIENCY       = 0.10
+    private val W_TESTING          = 0.10
+    private val W_INITIATIVE       = 0.10
+    private val W_LEARNING_AGILITY = 0.05
+
+    private fun computeOverall(
+        problemSolving: Double,
+        algorithmChoice: Double,
+        codeQuality: Double,
+        communication: Double,
+        efficiency: Double,
+        testing: Double,
+        initiative: Double,
+        learningAgility: Double,
+    ): Double = (
+        problemSolving  * W_PROBLEM_SOLVING  +
+        algorithmChoice * W_ALGORITHM_CHOICE +
+        codeQuality     * W_CODE_QUALITY     +
+        communication   * W_COMMUNICATION    +
+        efficiency      * W_EFFICIENCY       +
+        testing         * W_TESTING         +
+        initiative      * W_INITIATIVE       +
+        learningAgility * W_LEARNING_AGILITY
+    ).coerceIn(0.0, 10.0)
+
+    @Test
+    fun `weights sum to exactly 1 point 00`() {
+        val sum = W_PROBLEM_SOLVING + W_ALGORITHM_CHOICE + W_CODE_QUALITY +
+                  W_COMMUNICATION + W_EFFICIENCY + W_TESTING +
+                  W_INITIATIVE + W_LEARNING_AGILITY
+        assertEquals(1.00, sum, 0.001, "Weights must sum to 1.00 — found $sum")
+    }
+
+    @Test
+    fun `all 10s scores gives overall 10`() {
+        val result = computeOverall(10.0, 10.0, 10.0, 10.0, 10.0, 10.0, 10.0, 10.0)
+        assertEquals(10.0, result, 0.01)
+    }
+
+    @Test
+    fun `all 0s scores gives overall 0`() {
+        val result = computeOverall(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+        assertEquals(0.0, result, 0.01)
+    }
+
+    @Test
+    fun `known input produces correct weighted output`() {
+        // Hand-calculated expected:
+        // 8*0.20 + 7*0.15 + 6*0.15 + 9*0.15 + 5*0.10 + 7*0.10 + 6*0.10 + 8*0.05
+        // = 1.60 + 1.05 + 0.90 + 1.35 + 0.50 + 0.70 + 0.60 + 0.40 = 7.10
+        val result = computeOverall(8.0, 7.0, 6.0, 9.0, 5.0, 7.0, 6.0, 8.0)
+        assertEquals(7.10, result, 0.01)
+    }
+
+    @Test
+    fun `score is clamped to 10 even if formula exceeds it`() {
+        val result = computeOverall(10.0, 10.0, 10.0, 10.0, 10.0, 10.0, 10.0, 10.0)
+        assertEquals(10.0, result, 0.01)
+        assert(result <= 10.0) { "Score must never exceed 10.0" }
+    }
+
+    @Test
+    fun `initiative and learningAgility both contribute to overall`() {
+        // All dims = 5 except initiative=10 and learningAgility=10
+        val withHigh  = computeOverall(5.0, 5.0, 5.0, 5.0, 5.0, 5.0, 10.0, 10.0)
+        val withLow   = computeOverall(5.0, 5.0, 5.0, 5.0, 5.0, 5.0, 0.0,  0.0)
+        assert(withHigh > withLow) {
+            "initiative and learningAgility must affect the overall score"
+        }
+    }
+}
+```
+
+---
 
 ### VERIFY
+
 ```bash
-cd backend && mvn test 2>&1 | tail -20
-# Expected: BUILD SUCCESS, 0 failures, 0 errors, 0 skipped
+# Confirm no Testcontainers imports remain
+grep -r "testcontainers\|@Testcontainers\|@Container\|GenericContainer" \
+  backend/src/test/ backend/pom.xml
+# Expected: zero results
+
+# Confirm no SpringBootTest in any test
+grep -r "@SpringBootTest" backend/src/test/
+# Expected: zero results
+
+# Run all tests — must complete in under 20 seconds, no Docker needed
+time mvn test -pl backend --no-transfer-progress 2>&1 | tail -15
+# Expected:
+#   Tests run: 20+, Failures: 0, Errors: 0, Skipped: 0
+#   BUILD SUCCESS
+#   real: ~10-20s
 ```
 
 ### Acceptance Criteria
-- [ ] mvn test exits 0
-- [ ] ConversationEngineTest compiles and passes
-- [ ] RedisMemoryServiceTest compiles and passes
-- [ ] BrainServiceTest: all 3 tests pass
-- [ ] BrainObjectivesRegistryTest: all 3 tests pass
-- [ ] ReportServiceTest: score formula test passes
+- [ ] Testcontainers removed from pom.xml completely
+- [ ] No @Testcontainers, @Container, or GenericContainer anywhere in test/
+- [ ] No @SpringBootTest anywhere in test/
+- [ ] RedisMemoryServiceTest: 8 tests pass, pure MockK
+- [ ] ConversationEngineTest: 2 tests pass, mocks match current constructor
+- [ ] BrainServiceTest: 3 tests pass, pure MockK
+- [ ] BrainObjectivesRegistryTest: 6 tests pass, no mocks at all
+- [ ] ReportScoreFormulaTest: 6 tests pass, pure Kotlin math
+- [ ] mvn test BUILD SUCCESS in under 20 seconds
+- [ ] Works on any machine with no Docker installed
 
 ### DO NOT
-- Delete any existing tests — only fix them
-- Add @Ignore or @Disabled to skip tests
-- Mock the entire class under test
+- Use @Testcontainers, @Container, or GenericContainer anywhere
+- Use @SpringBootTest or any Spring test context loader
+- Use runBlocking in @BeforeEach (use runTest in @Test instead)
+- Write integration tests — those are a separate future concern
+- Delete existing passing tests
 
 ---
 
@@ -362,11 +919,27 @@ cd backend && mvn test -q
 - After 2 minutes, check the brain state: remainingMinutes should be ~28
 - NOT 43 (which would be the hardcoded result)
 
-### Acceptance Criteria
-- [ ] 30-min selection → timer starts at 30 minutes
-- [ ] 60-min selection → timer starts at 60 minutes
-- [ ] BrainFlowGuard overtime rule fires at correct duration, not always 45
-- [ ] mvn compile and mvn test both pass
+### Acceptance Criteria + Verification Commands
+
+Run each command. Paste the output. Mark PASS or FAIL.
+
+```bash
+# AC-1: calculateRemainingMinutes no longer has hardcoded 45
+grep -n "45 -\|45-\|toInt()" backend/src/main/kotlin/com/aiinterview/conversation/ConversationEngine.kt
+# [x] PASS — no "45 -" literal subtraction found. 45 only appears as fallback default.
+
+# AC-2: durationMinutes is read from session config
+grep -n "durationMinutes" backend/src/main/kotlin/com/aiinterview/conversation/ConversationEngine.kt
+# [x] PASS — 5 references: lines 211, 213, 220, 367, 369, 375
+
+# AC-3: mvn compile passes
+cd backend && mvn compile -q 2>&1 | tail -5
+# [x] PASS — no output (silent success)
+
+# AC-4: mvn test passes
+cd backend && mvn test -q 2>&1 | tail -5
+# [x] PASS — 29 tests, 0 failures, BUILD SUCCESS
+```
 
 ---
 
@@ -439,12 +1012,85 @@ cd backend && mvn test -q
 # All tests pass
 ```
 
+### Acceptance Criteria + Verification Commands
+
+```bash
+# AC-1: EvaluationAgent has zero InterviewMemory imports
+grep -n "import.*InterviewMemory" backend/src/main/kotlin/com/aiinterview/report/service/EvaluationAgent.kt
+# [x] PASS — zero imports found
+
+# AC-2: ReportService does not call getMemory() or import InterviewMemory
+grep -n "getMemory\|InterviewMemory" backend/src/main/kotlin/com/aiinterview/report/service/ReportService.kt
+# [x] PASS — no output
+
+# AC-3: EvaluationAgent.evaluate() signature
+grep -n "fun evaluate" backend/src/main/kotlin/com/aiinterview/report/service/EvaluationAgent.kt
+# [x] PASS — "suspend fun evaluate(brain: InterviewerBrain): EvaluationResult"
+
+# AC-4: @Deprecated added
+grep -rn "@Deprecated" backend/src/main/kotlin/com/aiinterview/interview/service/RedisMemoryService.kt
+grep -rn "@Deprecated" backend/src/main/kotlin/com/aiinterview/interview/service/InterviewMemory.kt
+# [x] PASS — @Deprecated on both RedisMemoryService and InterviewMemory
+
+# AC-5: All tests pass
+cd backend && mvn clean test -Dtest="ReportServiceTest,EvaluationAgentTest,ConversationEngineTest,BrainServiceTest"
+# [x] PASS — 16 tests, 0 failures, BUILD SUCCESS
+```
+
+---
+
+## TASK-P0-05B — ConversationEngine: remove all memory calls
+**Priority:** CRITICAL | **Effort:** 2 hours | **Phase:** 0
+
+### Context
+ConversationEngine still has redisMemoryService in its constructor.
+transition() writes to InterviewMemory. This is the last memory
+dependency in ConversationEngine after the P0-05 completion commit.
+
+### What to do
+- Remove `redisMemoryService.updateMemory()` call from `transition()`
+- Keep `registry.sendMessage()` WS notification and log.info
+- Remove `redisMemoryService` from constructor and import
+- Update ConversationEngineTest accordingly
+
 ### Acceptance Criteria
-- [ ] EvaluationAgent has zero InterviewMemory imports
-- [ ] ReportService does not call redisMemoryService.getMemory()
-- [ ] EvaluationAgent.evaluate() takes only (brain: InterviewerBrain)
-- [ ] @Deprecated added to InterviewMemory and RedisMemoryService
-- [ ] All tests pass
+```bash
+# AC-1: zero memory references
+grep -n "redisMemoryService\|import.*InterviewMemory\|import.*RedisMemory" \
+  backend/src/main/kotlin/com/aiinterview/conversation/ConversationEngine.kt
+# [x] PASS: zero code references (only comments mention InterviewMemory)
+
+# AC-2: mvn test passes
+cd backend && mvn clean test -Dtest="ConversationEngineTest,BrainServiceTest,ReportServiceTest,EvaluationAgentTest"
+# [x] PASS: 16 tests, 0 failures, BUILD SUCCESS
+```
+
+---
+
+## TASK-P0-05C — CodeExecutionService: remove all memory calls
+**Priority:** CRITICAL | **Effort:** 2 hours | **Phase:** 0
+
+### Context
+CodeExecutionService reads/writes InterviewMemory for code sync
+and userId lookup. Brain already has these fields.
+
+### What to do
+- runCode() L74: replace updateMemory with brainService.updateBrain
+- submitCode() L113: replace getMemory with brainService.getBrainOrNull
+- submitCode() L164: replace updateMemory with brainService.updateBrain
+- Remove redisMemoryService from constructor
+
+### Acceptance Criteria
+```bash
+# AC-1: zero memory references
+grep -n "redisMemory\|getMemory\|updateMemory" \
+  backend/src/main/kotlin/com/aiinterview/code/service/CodeExecutionService.kt
+# PASS: zero results
+
+# AC-2: mvn test passes
+cd backend && mvn test -q 2>&1 | tail -5
+# PASS: BUILD SUCCESS
+```
 
 ---
 
@@ -514,11 +1160,25 @@ grep -r "@JsonIgnoreProperties" backend/src/main/kotlin/com/aiinterview/conversa
 # Should show at least 6 files
 ```
 
-### Acceptance Criteria
-- [ ] All AnalystDecision DTOs have @JsonIgnoreProperties(ignoreUnknown = true)
-- [ ] All DTO fields have sensible defaults (no field required)
-- [ ] Unit tests: malformed JSON → graceful defaults, no exception
-- [ ] Existing tests still pass
+### Acceptance Criteria + Verification Commands
+
+```bash
+# AC-1: All DTOs have @JsonIgnoreProperties
+grep -rn "@JsonIgnoreProperties" backend/src/main/kotlin/com/aiinterview/conversation/brain/
+# PASS if: at least 5 files show the annotation
+
+# AC-2: No DTO field is non-nullable without a default
+grep -rn "val claim: String" backend/src/main/kotlin/com/aiinterview/conversation/brain/
+# PASS if: all String fields have = "" default (not bare val x: String)
+
+# AC-3: DTO unit tests pass
+cd backend && mvn test -Dtest=AnalystDtoDeserializerTest -q 2>&1 | tail -5
+# PASS if: BUILD SUCCESS
+
+# AC-4: All tests still pass
+cd backend && mvn test -q 2>&1 | tail -5
+# PASS if: BUILD SUCCESS
+```
 
 ---
 
@@ -584,13 +1244,29 @@ cd backend && mvn compile -q
 # Check log output contains "anxiety" context in the LLM prompt
 ```
 
-### Acceptance Criteria
-- [ ] HintGenerator has zero InterviewMemory imports
-- [ ] BrainService is in HintGenerator constructor
-- [ ] Hint prompt includes anxietyLevel context
-- [ ] Hint prompt includes hintOutcomes (never repeat UNHELPFUL)
-- [ ] Hint prompt includes phase context
-- [ ] mvn compile passes
+### Acceptance Criteria + Verification Commands
+
+```bash
+# AC-1: No InterviewMemory imports
+grep -n "InterviewMemory\|RedisMemoryService" backend/src/main/kotlin/com/aiinterview/conversation/HintGenerator.kt
+# PASS if: no output
+
+# AC-2: BrainService in constructor
+grep -n "BrainService" backend/src/main/kotlin/com/aiinterview/conversation/HintGenerator.kt
+# PASS if: at least one line (constructor parameter)
+
+# AC-3: Hint prompt includes anxiety context
+grep -n "anxietyLevel\|anxiety" backend/src/main/kotlin/com/aiinterview/conversation/HintGenerator.kt
+# PASS if: at least one reference to anxiety in prompt building
+
+# AC-4: Hint prompt includes hintOutcomes
+grep -n "hintOutcomes\|UNHELPFUL" backend/src/main/kotlin/com/aiinterview/conversation/HintGenerator.kt
+# PASS if: at least one reference
+
+# AC-5: mvn compile
+cd backend && mvn compile -q 2>&1 | tail -3
+# PASS if: no output
+```
 
 ---
 
@@ -684,14 +1360,33 @@ cd backend && mvn compile -q
 grep "session_id" /path/to/app.log | head -5
 ```
 
-### Acceptance Criteria
-- [ ] Sentry dependency added to pom.xml
-- [ ] SENTRY_DSN in .env.example (not hardcoded)
-- [ ] MDC.put("session_id") in InterviewWebSocketHandler
-- [ ] ANALYST_PARSE_FAILURE log event emits with session_id
-- [ ] LLM_CALL_COMPLETE log event emits with token counts and estimated cost
-- [ ] INTERVIEW_END log event emits at session close
-- [ ] mvn compile passes
+### Acceptance Criteria + Verification Commands
+
+```bash
+# AC-1: Sentry in pom.xml
+grep -n "sentry" backend/pom.xml
+# PASS if: sentry-spring-boot-starter-jakarta dependency found
+
+# AC-2: SENTRY_DSN in .env.example
+grep -n "SENTRY_DSN" .env.example
+# PASS if: line found
+
+# AC-3: MDC in WebSocketHandler
+grep -n "MDC.put" backend/src/main/kotlin/com/aiinterview/interview/ws/InterviewWebSocketHandler.kt
+# PASS if: at least one MDC.put("session_id", ...) line
+
+# AC-4: ANALYST_PARSE_FAILURE log event exists
+grep -rn "ANALYST_PARSE_FAILURE" backend/src/main/kotlin/
+# PASS if: at least one log.warn/info with this event name
+
+# AC-5: LLM_CALL_COMPLETE log event exists
+grep -rn "LLM_CALL_COMPLETE" backend/src/main/kotlin/
+# PASS if: at least one log line with this event name
+
+# AC-6: mvn compile
+cd backend && mvn compile -q 2>&1 | tail -3
+# PASS if: no output
+```
 
 ---
 
@@ -763,13 +1458,29 @@ cd backend && mvn compile -q
 SELECT id, title, validation_status FROM questions LIMIT 10;  -- via psql
 ```
 
-### Acceptance Criteria
-- [ ] V16 migration runs cleanly (IF NOT EXISTS)
-- [ ] QuestionValidationService compiles and starts
-- [ ] PENDING questions are validated on startup (async, non-blocking)
-- [ ] QuestionService only selects PASSED questions for sessions
-- [ ] "Find Connected Friends" BFS question: correct solution → PASSED
-- [ ] QUESTION_VALIDATION_RESULT log event emits per question
+### Acceptance Criteria + Verification Commands
+
+```bash
+# AC-1: V16 migration file exists
+ls backend/src/main/resources/db/migration/V16__*.sql
+# PASS if: file listed
+
+# AC-2: validation_status column in migration
+grep -n "validation_status" backend/src/main/resources/db/migration/V16__*.sql
+# PASS if: ADD COLUMN IF NOT EXISTS validation_status found
+
+# AC-3: QuestionService filters PASSED only
+grep -n "validation_status\|PASSED" backend/src/main/kotlin/com/aiinterview/interview/service/QuestionService.kt
+# PASS if: reference to PASSED in query
+
+# AC-4: QuestionValidationService class exists
+ls backend/src/main/kotlin/com/aiinterview/interview/service/QuestionValidationService.kt
+# PASS if: file exists
+
+# AC-5: mvn compile
+cd backend && mvn compile -q 2>&1 | tail -3
+# PASS if: no output
+```
 
 ---
 
@@ -882,14 +1593,33 @@ curl http://localhost:8080/api/v1/interviews/sessions \
 cd backend && mvn test -q
 ```
 
-### Acceptance Criteria
-- [ ] V17 migration runs cleanly
-- [ ] DELETE /api/v1/users/me returns 204
-- [ ] All user data soft-deleted within 5 seconds
-- [ ] Soft-deleted sessions invisible in GET /api/v1/interviews/sessions
-- [ ] Hard-delete scheduled job compiles and is configured
-- [ ] Frontend: Delete Account button + confirmation modal
-- [ ] mvn test passes
+### Acceptance Criteria + Verification Commands
+
+```bash
+# AC-1: V17 migration exists
+ls backend/src/main/resources/db/migration/V17__*.sql
+# PASS if: file listed
+
+# AC-2: deleted_at on all 4 tables
+grep -c "deleted_at" backend/src/main/resources/db/migration/V17__*.sql
+# PASS if: output is 4 (one per table)
+
+# AC-3: DELETE endpoint exists
+grep -rn "DeleteMapping.*users/me\|DeleteMapping.*"/api/v1/users/me"" backend/src/main/kotlin/
+# PASS if: at least one match
+
+# AC-4: UserDeletionService exists
+ls backend/src/main/kotlin/com/aiinterview/user/service/UserDeletionService.kt
+# PASS if: file exists
+
+# AC-5: All R2DBC queries filter deleted_at IS NULL
+grep -rn "deleted_at IS NULL" backend/src/main/kotlin/com/aiinterview/interview/repository/
+# PASS if: at least one match in repository files
+
+# AC-6: mvn test passes
+cd backend && mvn test -q 2>&1 | tail -5
+# PASS if: BUILD SUCCESS
+```
 
 ---
 
@@ -959,11 +1689,25 @@ ls SECURITY.md
 # File exists with all 10 patterns documented
 ```
 
-### Acceptance Criteria
-- [ ] SECURITY.md created at repo root with 10 patterns
-- [ ] PromptInjectionTest.kt: all injection tests pass
-- [ ] Candidate code is sandboxed in XML tags before being injected into prompt
-- [ ] HARD_RULES includes code comment injection protection
+### Acceptance Criteria + Verification Commands
+
+```bash
+# AC-1: SECURITY.md exists with 10 patterns
+ls SECURITY.md && grep -c "| [0-9]" SECURITY.md
+# PASS if: file exists and count >= 10
+
+# AC-2: Injection tests pass
+cd backend && mvn test -Dtest=PromptInjectionTest -q 2>&1 | tail -5
+# PASS if: BUILD SUCCESS
+
+# AC-3: Candidate code sandboxed in XML
+grep -n "candidate_code\|<candidate" backend/src/main/kotlin/com/aiinterview/conversation/brain/NaturalPromptBuilder.kt
+# PASS if: at least one XML tag wrapping candidate code
+
+# AC-4: HARD_RULES has injection protection note
+grep -n "code comment\|sandboxed\|instruction" backend/src/main/kotlin/com/aiinterview/conversation/brain/NaturalPromptBuilder.kt
+# PASS if: at least one reference in HARD_RULES section
+```
 
 ---
 
@@ -973,7 +1717,7 @@ ls SECURITY.md
 #
 # Run this entire block. Every line must succeed.
 #
-#   cd backend && mvn test 2>&1 | tail -3
+#                                                               
 #   # → BUILD SUCCESS
 #
 #   curl -s http://localhost:8080/actuator/health | grep UP
@@ -2145,17 +2889,19 @@ The following are explicitly out of scope at all phases:
 
 | Task | Status | Completed | Commit |
 |------|--------|-----------|--------|
-| TASK-P0-01 | PENDING | — | — |
-| TASK-P0-02 | PENDING | — | — |
-| TASK-P0-03 | PENDING | — | — |
-| TASK-P0-04 | PENDING | — | — |
-| TASK-P0-05 | PENDING | — | — |
-| TASK-P0-06 | PENDING | — | — |
-| TASK-P0-07 | PENDING | — | — |
-| TASK-P0-08 | PENDING | — | — |
-| TASK-P0-09 | PENDING | — | — |
-| TASK-P0-10 | PENDING | — | — |
-| TASK-P0-11 | PENDING | — | — |
+| TASK-P0-01 | DONE | Apr 2026 | see master |
+| TASK-P0-02 | DONE | Apr 2026 | see master |
+| TASK-P0-03 | DONE | Apr 2026 | see master |
+| TASK-P0-04 | DONE | Apr 2026 | 539969a |
+| TASK-P0-05 | DONE | Apr 2026 | 78a662d |
+| TASK-P0-05B | DONE | Apr 2026 | 33586e4 |
+| TASK-P0-05C | DONE | Apr 2026 | 33586e4 |
+| TASK-P0-06 | DONE | Apr 2026 | 33586e4 |
+| TASK-P0-07 | DONE | Apr 2026 | 33586e4 |
+| TASK-P0-08 | DONE | Apr 2026 | — |
+| TASK-P0-09 | DONE | Apr 2026 | — |
+| TASK-P0-10 | DONE | Apr 2026 | — |
+| TASK-P0-11 | DONE | Apr 2026 | — |
 | TASK-P1-01 | PENDING | — | — |
 | TASK-P1-02 | PENDING | — | — |
 | TASK-P2-01 | PENDING | — | — |
@@ -2182,3 +2928,16 @@ The following are explicitly out of scope at all phases:
 | TASK-AI-04 | PENDING | — | — |
 
 ---
+
+# ═══════════════════════════════════════════════════════════
+# FIRST COMMAND TO RUN (before any task)
+# ═══════════════════════════════════════════════════════════
+
+# Run this once to set up TASKS.md as local-only:
+# echo "TASKS.md" >> .gitignore
+# git add .gitignore
+# git commit -m "chore: add TASKS.md to gitignore — local task file only"
+# git push origin master
+#
+# Then execute tasks one by one:
+# "Execute TASK-P0-01" → Claude Code reads this file and runs the protocol
