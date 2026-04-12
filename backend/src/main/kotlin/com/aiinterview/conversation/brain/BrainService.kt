@@ -1,5 +1,7 @@
 package com.aiinterview.conversation.brain
 
+import com.aiinterview.memory.model.CandidateMemoryProfile
+import com.aiinterview.memory.service.CandidateMemoryService
 import com.fasterxml.jackson.databind.ObjectMapper
 import jakarta.annotation.PreDestroy
 import kotlinx.coroutines.reactor.awaitSingle
@@ -18,6 +20,7 @@ import java.util.concurrent.ConcurrentHashMap
 class BrainService(
     private val redisTemplate: ReactiveStringRedisTemplate,
     private val objectMapper: ObjectMapper,
+    private val candidateMemoryService: CandidateMemoryService,
 ) {
     private val log = LoggerFactory.getLogger(BrainService::class.java)
 
@@ -43,7 +46,12 @@ class BrainService(
         experienceLevel: String? = null,
         programmingLanguage: String? = null,
         configuredDurationMinutes: Int = 45,
+        candidateMemory: CandidateMemoryProfile? = null,
     ): InterviewerBrain {
+        val history = candidateMemory?.let {
+            try { candidateMemoryService.derivedInsights(it) }
+            catch (e: Exception) { log.warn("Failed to compute candidateHistory for session {}: {}", sessionId, e.message); null }
+        }
         val brain = InterviewerBrain(
             sessionId = sessionId,
             userId = userId,
@@ -55,9 +63,10 @@ class BrainService(
             experienceLevel = experienceLevel,
             programmingLanguage = programmingLanguage,
             configuredDurationMinutes = configuredDurationMinutes,
+            candidateHistory = history,
         )
         saveBrain(sessionId, brain)
-        log.debug("Initialized brain for session {}", sessionId)
+        log.debug("Initialized brain for session {} candidateHistory={}", sessionId, if (history != null) "present(sessions=${history.sessionCount})" else "null")
         return brain
     }
 

@@ -8,6 +8,19 @@ export interface User {
   plan: 'FREE' | 'PRO'
   createdAt: string
   onboardingCompleted: boolean
+  memoryEnabled: boolean
+}
+
+// ── Memory ──
+
+export interface DerivedInsights {
+  sessionCount: number
+  weaknesses: string[]
+  topDimension: string
+  avgAnxiety: number
+  dimensionTrend: Record<string, string>
+  questionsSeen: string[]
+  lastUpdated: string | null
 }
 
 // ── Onboarding ──

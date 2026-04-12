@@ -1,5 +1,6 @@
 package com.aiinterview.conversation.brain
 
+import com.aiinterview.memory.service.CandidateMemoryService
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import io.mockk.every
 import io.mockk.mockk
@@ -24,6 +25,7 @@ class BrainServiceTest {
 
     private val redisTemplate = mockk<ReactiveStringRedisTemplate>()
     private val valueOps = mockk<ReactiveValueOperations<String, String>>()
+    private val candidateMemoryService = mockk<CandidateMemoryService>(relaxed = true)
 
     private lateinit var service: BrainService
 
@@ -33,7 +35,7 @@ class BrainServiceTest {
     @BeforeEach
     fun setup() {
         every { redisTemplate.opsForValue() } returns valueOps
-        service = BrainService(redisTemplate, objectMapper)
+        service = BrainService(redisTemplate, objectMapper, candidateMemoryService)
     }
 
     @Test

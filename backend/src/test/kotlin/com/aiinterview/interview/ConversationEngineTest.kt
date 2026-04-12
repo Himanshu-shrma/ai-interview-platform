@@ -17,7 +17,9 @@ import com.aiinterview.interview.repository.SessionQuestionRepository
 import com.aiinterview.interview.service.QuestionService
 import com.aiinterview.interview.ws.OutboundMessage
 import com.aiinterview.interview.ws.WsSessionRegistry
+import com.aiinterview.memory.service.CandidateMemoryService
 import com.aiinterview.report.service.ReportService
+import com.aiinterview.user.repository.UserRepository
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import io.mockk.coEvery
 import io.mockk.coVerify
@@ -44,6 +46,8 @@ class ConversationEngineTest {
     private val theAnalyst = mockk<TheAnalyst>(relaxed = true)
     private val theStrategist = mockk<TheStrategist>(relaxed = true)
     private val brainFlowGuard = mockk<BrainFlowGuard>(relaxed = true)
+    private val candidateMemoryService = mockk<CandidateMemoryService>(relaxed = true)
+    private val userRepository = mockk<UserRepository>(relaxed = true)
 
     private val engine = ConversationEngine(
         registry = registry,
@@ -58,6 +62,8 @@ class ConversationEngineTest {
         theAnalyst = theAnalyst,
         theStrategist = theStrategist,
         brainFlowGuard = brainFlowGuard,
+        candidateMemoryService = candidateMemoryService,
+        userRepository = userRepository,
     )
 
     private val sessionId = UUID.randomUUID()
@@ -103,6 +109,10 @@ class ConversationEngineTest {
         every { messageRepository.save(any<ConversationMessage>()) } returns Mono.just(
             ConversationMessage(sessionId = sessionId, role = "AI", content = "test")
         )
+        // userRepository.findById must return a completing Mono (relaxed mock returns non-completing mock Mono)
+        every { userRepository.findById(any<UUID>()) } returns Mono.empty()
+        // loadProfile returns null: relaxed mock returns a CandidateMemoryProfile mock by default (not null)
+        coEvery { candidateMemoryService.loadProfile(any()) } returns null
 
         runTest {
             engine.startInterview(sessionId)
@@ -123,6 +133,7 @@ class ConversationEngineTest {
                 personality = "friendly", targetCompany = null,
                 experienceLevel = null, programmingLanguage = null,
                 configuredDurationMinutes = any(),
+                candidateMemory = null,
             )
         }
     }

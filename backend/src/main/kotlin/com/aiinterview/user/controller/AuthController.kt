@@ -44,6 +44,7 @@ class AuthController(
                 plan = org.plan,
                 interviewsUsedThisMonth = usedThisMonth,
                 onboardingCompleted = user.onboardingCompleted,
+                memoryEnabled = user.memoryEnabled,
             )
         )
     }

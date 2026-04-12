@@ -45,6 +45,20 @@ data class InterviewerBrain(
     val configuredDurationMinutes: Int = 45,
     val startedAt: Instant = Instant.now(),
     val lastActivityAt: Instant = Instant.now(),
+    /** Populated from CandidateMemoryProfile when candidate has prior sessions. */
+    val candidateHistory: CandidateHistory? = null,
+)
+
+// ═══ Cross-Session Memory ═══
+
+@JsonIgnoreProperties(ignoreUnknown = true)
+data class CandidateHistory(
+    val sessionCount: Int,
+    val weaknesses: List<String> = emptyList(),
+    val topDimension: String = "",
+    val avgAnxiety: Double = 0.3,
+    val trend: Map<String, String> = emptyMap(),
+    val questionsSeen: List<String> = emptyList(),
 )
 
 // ═══ Candidate Profile ═══

@@ -17,4 +17,5 @@ data class User(
     val createdAt: OffsetDateTime? = null,
     val onboardingCompleted: Boolean = false,
     val onboardingAnswers: String? = null,  // JSON stored as TEXT
+    val memoryEnabled: Boolean = true,
 )

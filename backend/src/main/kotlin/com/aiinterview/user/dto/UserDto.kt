@@ -12,4 +12,5 @@ data class UserDto(
     val plan: String,
     val interviewsUsedThisMonth: Int,
     val onboardingCompleted: Boolean = false,
+    val memoryEnabled: Boolean = true,
 )

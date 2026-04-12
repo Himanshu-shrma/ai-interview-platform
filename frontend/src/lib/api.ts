@@ -11,6 +11,7 @@ import type {
   User,
   OnboardingRequest,
   OnboardingRecommendation,
+  DerivedInsights,
 } from '@/types'
 
 const api = axios.create({
@@ -45,6 +46,19 @@ export async function getMe(): Promise<User> {
 export async function postOnboarding(req: OnboardingRequest): Promise<OnboardingRecommendation> {
   const { data } = await api.post<OnboardingRecommendation>('/api/v1/users/me/onboarding', req)
   return data
+}
+
+export async function getMemory(): Promise<DerivedInsights> {
+  const { data } = await api.get<DerivedInsights>('/api/v1/users/me/memory')
+  return data
+}
+
+export async function resetMemory(): Promise<void> {
+  await api.delete('/api/v1/users/me/memory')
+}
+
+export async function setMemoryEnabled(enabled: boolean): Promise<void> {
+  await api.patch('/api/v1/users/me/memory-enabled', { enabled })
 }
 
 export async function getStats(): Promise<UserStatsDto> {

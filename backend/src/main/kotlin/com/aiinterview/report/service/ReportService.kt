@@ -1,7 +1,9 @@
 package com.aiinterview.report.service
 
 import com.aiinterview.conversation.brain.BrainService
+import com.aiinterview.memory.service.CandidateMemoryService
 import com.aiinterview.interview.model.InterviewSession
+import com.aiinterview.user.repository.UserRepository
 import com.aiinterview.interview.repository.InterviewSessionRepository
 import com.aiinterview.interview.repository.SessionQuestionRepository
 import com.aiinterview.interview.service.InterviewConfig
@@ -41,6 +43,8 @@ class ReportService(
     private val sessionQuestionRepository: SessionQuestionRepository,
     private val questionRepository: QuestionRepository,
     private val usageLimitService: UsageLimitService,
+    private val candidateMemoryService: CandidateMemoryService,
+    private val userRepository: UserRepository,
     private val objectMapper: ObjectMapper,
     @Value("\${interview.free-tier-limit:3}") private val freeTierLimit: Int,
 ) {
@@ -154,7 +158,19 @@ class ReportService(
         }
         val reportId = requireNotNull(report.id) { "Saved report has null id" }
 
-        // 7. Update session: COMPLETED + duration
+        // 7. Upsert candidate memory profile (skip if user has memory disabled)
+        try {
+            val user = withContext(Dispatchers.IO) {
+                userRepository.findById(brain.userId).awaitSingleOrNull()
+            }
+            if (user?.memoryEnabled != false) {
+                candidateMemoryService.upsertFromReport(brain.userId, sessionId)
+            }
+        } catch (e: Exception) {
+            log.warn("Failed to upsert memory profile for userId={}: {}", brain.userId, e.message)
+        }
+
+        // 9. Update session: COMPLETED + duration
         withContext(Dispatchers.IO) {
             interviewSessionRepository.save(
                 session.copy(
@@ -165,14 +181,14 @@ class ReportService(
             ).awaitSingle()
         }
 
-        // 8. Increment usage counter
+        // 10. Increment usage counter
         try {
             usageLimitService.incrementUsage(brain.userId)
         } catch (e: Exception) {
             log.warn("Failed to increment usage for user {}: {}", brain.userId, e.message)
         }
 
-        // 9. Send SESSION_END over WebSocket
+        // 11. Send SESSION_END over WebSocket
         registry.sendMessage(sessionId, OutboundMessage.SessionEnd(reportId = reportId))
         log.info("Report generated for session={} reportId={} overallScore={}", sessionId, reportId, overallScore)
         log.info("""{"event":"INTERVIEW_END","session_id":"$sessionId","turn_count":${brain.turnCount},"overall_score":${"%.2f".format(overallScore)},"completion_reason":"CANDIDATE_ENDED"}""")

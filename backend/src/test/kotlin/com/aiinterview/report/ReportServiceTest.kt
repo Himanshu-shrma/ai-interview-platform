@@ -11,14 +11,17 @@ import com.aiinterview.interview.ws.OutboundMessage
 import com.aiinterview.interview.ws.WsSessionRegistry
 import com.aiinterview.report.model.EvaluationReport
 import com.aiinterview.report.repository.EvaluationReportRepository
+import com.aiinterview.memory.service.CandidateMemoryService
 import com.aiinterview.report.service.EvaluationAgent
 import com.aiinterview.report.service.EvaluationResult
 import com.aiinterview.report.service.EvaluationScores
 import com.aiinterview.report.service.ReportService
+import com.aiinterview.user.repository.UserRepository
 import com.aiinterview.user.service.UsageLimitService
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import io.mockk.coEvery
 import io.mockk.coVerify
+import io.mockk.every
 import io.mockk.mockk
 import io.mockk.slot
 import kotlinx.coroutines.test.runTest
@@ -40,6 +43,8 @@ class ReportServiceTest {
     private val sessionQuestionRepository  = mockk<SessionQuestionRepository>()
     private val questionRepository         = mockk<QuestionRepository>()
     private val usageLimitService          = mockk<UsageLimitService>(relaxed = true)
+    private val candidateMemoryService     = mockk<CandidateMemoryService>(relaxed = true)
+    private val userRepository             = mockk<UserRepository>(relaxed = true)
     private val objectMapper               = jacksonObjectMapper()
 
     private val service = ReportService(
@@ -51,6 +56,8 @@ class ReportServiceTest {
         sessionQuestionRepository  = sessionQuestionRepository,
         questionRepository         = questionRepository,
         usageLimitService          = usageLimitService,
+        candidateMemoryService     = candidateMemoryService,
+        userRepository             = userRepository,
         objectMapper               = objectMapper,
         freeTierLimit              = 3,
     )
@@ -117,6 +124,8 @@ class ReportServiceTest {
         coEvery { interviewSessionRepository.save(any()) } answers {
             Mono.just(firstArg<InterviewSession>())
         }
+        // userRepository.findById returns Mono.empty() (no user row needed — memoryEnabled defaults true via null-check)
+        every { userRepository.findById(any<UUID>()) } returns Mono.empty()
     }
 
     @Test

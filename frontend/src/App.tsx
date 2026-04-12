@@ -2,6 +2,7 @@ import { Routes, Route, Navigate, useLocation } from 'react-router-dom'
 import { SignIn, SignUp, useAuth } from '@clerk/clerk-react'
 import { useQuery } from '@tanstack/react-query'
 import { type ReactNode } from 'react'
+import AccountSettingsPage from '@/pages/AccountSettingsPage'
 import DashboardPage from '@/pages/DashboardPage'
 import InterviewSetupPage from '@/pages/InterviewSetupPage'
 import InterviewPage from '@/pages/InterviewPage'
@@ -112,6 +113,14 @@ export default function App() {
         element={
           <ProtectedRoute>
             <ReportPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/settings"
+        element={
+          <ProtectedRoute>
+            <AccountSettingsPage />
           </ProtectedRoute>
         }
       />

@@ -8,6 +8,8 @@ import com.aiinterview.conversation.brain.TheAnalyst
 import com.aiinterview.conversation.brain.TheConductor
 import com.aiinterview.conversation.brain.TheStrategist
 import com.aiinterview.conversation.brain.computeBrainInterviewState
+import com.aiinterview.memory.service.CandidateMemoryService
+import com.aiinterview.user.repository.UserRepository
 import com.aiinterview.interview.dto.toInternalDto
 import com.aiinterview.interview.model.ConversationMessage
 import com.aiinterview.interview.repository.ConversationMessageRepository
@@ -62,6 +64,8 @@ class ConversationEngine(
     private val theAnalyst: TheAnalyst,
     private val theStrategist: TheStrategist,
     private val brainFlowGuard: BrainFlowGuard,
+    private val candidateMemoryService: CandidateMemoryService,
+    private val userRepository: UserRepository,
 ) {
     private val log = LoggerFactory.getLogger(ConversationEngine::class.java)
 
@@ -187,14 +191,25 @@ class ConversationEngine(
         val isCodingType = category in setOf("CODING", "DSA")
         val isBehavioral = category == "BEHAVIORAL"
 
+        // Load user + memory profile before greeting (needed for returning-user detection)
+        val user = withContext(Dispatchers.IO) {
+            userRepository.findById(session.userId).awaitSingleOrNull()
+        }
+        val memoryEnabled = user?.memoryEnabled != false
+        val memoryProfile = if (memoryEnabled) {
+            try { candidateMemoryService.loadProfile(session.userId) } catch (e: Exception) { null }
+        } else null
+
         transition(sessionId, InterviewState.QuestionPresented)
 
+        // "Good to see you again" only when: sessionCount > 1 AND memory_enabled = true
+        val isReturning = (memoryProfile?.sessionCount ?: 0) > 1 && memoryEnabled
         val greeting = when (config.personality.uppercase()) {
-            "FAANG_SENIOR" -> "Hey. Let's get started."
-            "FRIENDLY_MENTOR", "FRIENDLY" -> "Hey! Great to meet you."
-            "STARTUP_ENGINEER", "STARTUP" -> "Hey, welcome."
-            "ADAPTIVE" -> "Hi! Good to meet you."
-            else -> "Hey! I'll be your interviewer today."
+            "FAANG_SENIOR" -> if (isReturning) "Hey. Good to see you again." else "Hey. Let's get started."
+            "FRIENDLY_MENTOR", "FRIENDLY" -> if (isReturning) "Hey! Good to see you again." else "Hey! Great to meet you."
+            "STARTUP_ENGINEER", "STARTUP" -> if (isReturning) "Hey, good to see you again." else "Hey, welcome."
+            "ADAPTIVE" -> if (isReturning) "Hi! Good to see you again." else "Hi! Good to meet you."
+            else -> if (isReturning) "Hey! Good to see you again." else "Hey! I'll be your interviewer today."
         }
 
         // Send greeting only — problem presented by TheConductor on turn 1 after candidate responds
@@ -222,6 +237,7 @@ class ConversationEngine(
                 category = category,
             )
             val goals = BrainObjectivesRegistry.forCategory(category)
+
             brainService.initBrain(
                 sessionId = sessionId,
                 userId = session.userId,
@@ -233,6 +249,7 @@ class ConversationEngine(
                 experienceLevel = config.experienceLevel,
                 programmingLanguage = config.programmingLanguage,
                 configuredDurationMinutes = config.durationMinutes,
+                candidateMemory = memoryProfile,
             )
             log.info("Brain initialized for session {} — question='{}' type={}", sessionId, question.title, category)
             if (question.title.isBlank()) log.error("CRITICAL: Question title is blank for session {}", sessionId)
