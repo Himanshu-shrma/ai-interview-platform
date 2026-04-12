@@ -26,4 +26,7 @@ interface InterviewSessionRepository : ReactiveCrudRepository<InterviewSession, 
 
     @Query("SELECT COUNT(*) FROM interview_sessions WHERE user_id = :userId AND status = :status AND deleted_at IS NULL")
     fun countByUserIdAndStatus(userId: UUID, status: String): Mono<Long>
+
+    @Query("UPDATE interview_sessions SET feedback = :feedback WHERE id = :id AND user_id = :userId")
+    fun updateFeedback(id: UUID, userId: UUID, feedback: String): Mono<Long>
 }

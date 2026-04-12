@@ -21,4 +21,6 @@ data class InterviewSession(
     val currentStage: String? = "SMALL_TALK",
     val integritySignals: String? = null,
     val deletedAt: OffsetDateTime? = null,
+    /** JSONB — post-session outcome report (NPS, difficulty rating, fairness) */
+    val feedback: String? = null,
 )

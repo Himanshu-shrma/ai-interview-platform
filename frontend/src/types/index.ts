@@ -218,6 +218,17 @@ export interface ReportSummaryDto {
   completedAt: string
 }
 
+// ── Outcome / Post-session feedback ──
+
+export interface OutcomeRequest {
+  hired?: boolean
+  company?: string
+  level?: string
+  platformHelped?: boolean
+  feltRealistic?: 'yes' | 'somewhat' | 'no'
+  nps?: number   // 1–10
+}
+
 // ── Stats ──
 
 export interface UserStatsDto {

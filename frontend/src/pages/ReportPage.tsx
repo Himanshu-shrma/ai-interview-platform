@@ -8,15 +8,18 @@ import {
   PolarRadiusAxis,
   ResponsiveContainer,
 } from 'recharts'
+import { useMutation } from '@tanstack/react-query'
 import { useReport } from '@/hooks/useReport'
+import { useProgress } from '@/hooks/useInterviews'
 import { CategoryBadge } from '@/components/shared/CategoryBadge'
 import { DifficultyBadge } from '@/components/shared/DifficultyBadge'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { cn } from '@/lib/utils'
-import { ExternalLink, Loader2 } from 'lucide-react'
-import type { ReportDto, ScoresDto, NextStep, StudyResource } from '@/types'
+import { ExternalLink, Loader2, Share2, X } from 'lucide-react'
+import { submitOutcome } from '@/lib/api'
+import type { ReportDto, ScoresDto, NextStep, StudyResource, OutcomeRequest } from '@/types'
 
 // ── Score count-up animation hook ──
 
@@ -113,14 +116,14 @@ function DimensionBar({
   delay,
   explanation,
   weight,
-}: {
+}: Readonly<{
   label: string
   score: number
   feedback?: string
   delay: number
   explanation?: string
   weight?: number
-}) {
+}>) {
   const [width, setWidth] = useState(0)
   useEffect(() => {
     const timer = setTimeout(() => setWidth((score / 10) * 100), delay)
@@ -181,15 +184,13 @@ function priorityStyles(p: string): { border: string; badge: string } {
 }
 
 function StudyPlanCard({ step, onPractice }: Readonly<{ step: NextStep; onPractice: (topic: string) => void }>) {
-  // Support both new schema (topic/gap/evidence) and legacy (area/specificGap/evidenceFromInterview)
   const topic    = step.topic    || step.area
   const gap      = step.gap      || step.specificGap
   const evidence = step.evidence || step.evidenceFromInterview
-  const styles = priorityStyles(step.priority)
+  const styles   = priorityStyles(step.priority)
 
   return (
     <div className={cn('rounded-lg border p-4 space-y-2', styles.border)}>
-      {/* Header row */}
       <div className="flex items-center justify-between gap-2 flex-wrap">
         <span className="font-semibold text-sm">{topic}</span>
         <div className="flex items-center gap-2">
@@ -201,21 +202,13 @@ function StudyPlanCard({ step, onPractice }: Readonly<{ step: NextStep; onPracti
           </span>
         </div>
       </div>
-
-      {/* Gap description */}
       {gap && <p className="text-sm text-muted-foreground">{gap}</p>}
-
-      {/* Evidence blockquote */}
       {evidence && (
         <blockquote className="border-l-2 border-muted-foreground/30 pl-3 text-xs italic text-muted-foreground">
           {evidence}
         </blockquote>
       )}
-
-      {/* Legacy action item */}
       {step.actionItem && <p className="text-sm">{step.actionItem}</p>}
-
-      {/* Resource links */}
       {step.resources && step.resources.length > 0 && (
         <div className="flex flex-wrap gap-2 pt-1">
           {step.resources.map((r) => (
@@ -232,18 +225,139 @@ function StudyPlanCard({ step, onPractice }: Readonly<{ step: NextStep; onPracti
           ))}
         </div>
       )}
-
-      {/* Legacy plain resource string */}
       {(!step.resources || step.resources.length === 0) && step.resource && (
         <p className="text-xs text-blue-600">{step.resource}</p>
       )}
-
-      {/* Practice CTA */}
       <div className="pt-1">
         <Button size="sm" variant="outline" onClick={() => onPractice(topic)}>
           Practice this topic →
         </Button>
       </div>
+    </div>
+  )
+}
+
+// ── Post-session feedback form (appears 10s after load, dismissible) ──
+
+function FeedbackForm({ sessionId, onDismiss }: Readonly<{ sessionId: string; onDismiss: () => void }>) {
+  const [level, setLevel] = useState<string | null>(null)
+  const [feltRealistic, setFeltRealistic] = useState<OutcomeRequest['feltRealistic'] | null>(null)
+  const [nps, setNps] = useState<number | null>(null)
+  const [submitted, setSubmitted] = useState(false)
+
+  const mutation = useMutation({
+    mutationFn: (req: OutcomeRequest) => submitOutcome(sessionId, req),
+    onSuccess: () => setSubmitted(true),
+  })
+
+  function handleSubmit() {
+    mutation.mutate({
+      level: level ?? undefined,
+      feltRealistic: feltRealistic ?? undefined,
+      nps: nps ?? undefined,
+    })
+  }
+
+  const canSubmit = level !== null || feltRealistic !== null || nps !== null
+
+  return (
+    <div className="fixed bottom-6 right-6 z-50 w-80 rounded-xl border bg-card shadow-xl">
+      <div className="flex items-center justify-between p-4 pb-2">
+        <span className="font-semibold text-sm">Quick Feedback</span>
+        <button
+          onClick={onDismiss}
+          className="text-muted-foreground hover:text-foreground transition-colors"
+          aria-label="Dismiss feedback form"
+        >
+          <X className="h-4 w-4" />
+        </button>
+      </div>
+
+      {submitted ? (
+        <div className="p-4 pt-2 text-center">
+          <p className="text-sm font-medium text-green-600">Thanks for your feedback! 🙏</p>
+          <p className="text-xs text-muted-foreground mt-1">This helps us improve the platform.</p>
+        </div>
+      ) : (
+        <div className="p-4 pt-2 space-y-4">
+          {/* Q1: Question difficulty */}
+          <div>
+            <p className="text-xs font-medium mb-2">Was the question right for your level?</p>
+            <div className="flex gap-1.5">
+              {(['too_easy', 'about_right', 'too_hard'] as const).map((v) => (
+                <button
+                  key={v}
+                  onClick={() => setLevel(v)}
+                  className={cn(
+                    'flex-1 rounded-md border px-1.5 py-1 text-xs font-medium transition-colors',
+                    level === v
+                      ? 'bg-primary text-primary-foreground border-primary'
+                      : 'hover:bg-muted'
+                  )}
+                >
+                  {v === 'too_easy' ? 'Too Easy' : v === 'about_right' ? 'About Right' : 'Too Hard'}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Q2: AI fairness */}
+          <div>
+            <p className="text-xs font-medium mb-2">Was the AI a fair interviewer?</p>
+            <div className="flex gap-1.5">
+              {(['yes', 'somewhat', 'no'] as const).map((v) => (
+                <button
+                  key={v}
+                  onClick={() => setFeltRealistic(v)}
+                  className={cn(
+                    'flex-1 rounded-md border px-2 py-1 text-xs font-medium transition-colors capitalize',
+                    feltRealistic === v
+                      ? 'bg-primary text-primary-foreground border-primary'
+                      : 'hover:bg-muted'
+                  )}
+                >
+                  {v === 'yes' ? 'Yes' : v === 'somewhat' ? 'Somewhat' : 'No'}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Q3: NPS */}
+          <div>
+            <p className="text-xs font-medium mb-2">Would you recommend this? (1–10)</p>
+            <div className="flex gap-1 flex-wrap">
+              {Array.from({ length: 10 }, (_, i) => i + 1).map((n) => (
+                <button
+                  key={n}
+                  onClick={() => setNps(n)}
+                  className={cn(
+                    'w-7 h-7 rounded-md border text-xs font-medium transition-colors',
+                    nps === n
+                      ? 'bg-primary text-primary-foreground border-primary'
+                      : 'hover:bg-muted'
+                  )}
+                >
+                  {n}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="flex gap-2">
+            <Button
+              size="sm"
+              onClick={handleSubmit}
+              disabled={!canSubmit || mutation.isPending}
+              className="flex-1"
+            >
+              {mutation.isPending ? 'Saving...' : 'Submit'}
+            </Button>
+            <Button size="sm" variant="ghost" onClick={onDismiss}>
+              Skip
+            </Button>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
@@ -282,16 +396,13 @@ export default function ReportPage() {
   const { sessionId } = useParams<{ sessionId: string }>()
   const { data: report, isLoading, isError, error, failureCount } = useReport(sessionId ?? '')
 
-  // Still generating (retrying on 404)
   if (isLoading || (!report && !isError)) {
     if (failureCount > 0) {
       return (
         <div className="flex min-h-screen flex-col items-center justify-center gap-4">
           <Loader2 className="h-10 w-10 animate-spin text-primary" />
           <h2 className="text-xl font-semibold">Generating your report...</h2>
-          <p className="text-sm text-muted-foreground">
-            This usually takes 10-15 seconds
-          </p>
+          <p className="text-sm text-muted-foreground">This usually takes 10-15 seconds</p>
         </div>
       )
     }
@@ -302,9 +413,7 @@ export default function ReportPage() {
     return (
       <div className="flex min-h-screen flex-col items-center justify-center gap-4">
         <h2 className="text-xl font-semibold text-destructive">Failed to load report</h2>
-        <p className="text-sm text-muted-foreground">
-          {error?.message ?? 'Something went wrong.'}
-        </p>
+        <p className="text-sm text-muted-foreground">{error?.message ?? 'Something went wrong.'}</p>
         <div className="flex gap-3">
           <Button variant="outline" asChild>
             <Link to="/dashboard">Back to Dashboard</Link>
@@ -323,8 +432,53 @@ function ReportContent({ report }: Readonly<{ report: ReportDto }>) {
   const animatedScore = useCountUp(report.overallScore)
   const radarData = buildRadarData(report.scores)
 
+  // Progress data for score context, delta, and next CTA
+  const { data: progress } = useProgress()
+
+  // Feedback form — appears 10s after report loads
+  const [feedbackVisible, setFeedbackVisible] = useState(false)
+  const [feedbackDismissed, setFeedbackDismissed] = useState(false)
+  useEffect(() => {
+    const timer = setTimeout(() => setFeedbackVisible(true), 10_000)
+    return () => clearTimeout(timer)
+  }, [])
+
+  // Delta from last session
+  const sessions = progress?.sessions ?? []
+  const currentIdx = sessions.findIndex((s) => s.sessionId === report.sessionId)
+  const prevSession = currentIdx > 0 ? sessions[currentIdx - 1] : null
+  const overallDelta = prevSession != null
+    ? +(report.overallScore - prevSession.overallScore).toFixed(1)
+    : null
+  const mostImproved = progress?.mostImproved
+
+  // Next session recommendation
+  const needsAttentionDim = progress?.needsAttention?.dimension
+  const needsAttentionLabel = needsAttentionDim
+    ? (dimensionLabels[needsAttentionDim as keyof typeof dimensionLabels] ?? needsAttentionDim)
+    : null
+  const nextDifficulty = report.overallScore >= 7 ? 'HARD' : 'MEDIUM'
+
+  // LinkedIn share
+  const shareText = `I scored ${report.overallScore.toFixed(1)}/10 on a ${report.difficulty.toLowerCase()} ${report.category.toLowerCase().replace('_', ' ')} interview on AI Interview Platform!`
+  const linkedInShareUrl =
+    `https://www.linkedin.com/shareArticle?mini=true` +
+    `&url=${encodeURIComponent('https://aiinterviewplatform.com')}` +
+    `&title=${encodeURIComponent('AI Interview Platform')}` +
+    `&summary=${encodeURIComponent(shareText)}`
+
   function handlePracticeTopic(topic: string) {
     navigate('/interview/setup', { state: { topic } })
+  }
+
+  function handleNextSession() {
+    navigate('/interview/setup', {
+      state: {
+        topic: needsAttentionLabel ? `Focus on ${needsAttentionLabel}` : undefined,
+        difficulty: nextDifficulty,
+        category: report.category,
+      },
+    })
   }
 
   return (
@@ -360,6 +514,12 @@ function ReportContent({ report }: Readonly<{ report: ReportDto }>) {
             )}>
               {scoreLabel(report.overallScore)}
             </span>
+            {/* Score context: percentile */}
+            {progress?.platformPercentile != null && (
+              <p className="mt-2 text-xs text-muted-foreground text-center">
+                Top {100 - progress.platformPercentile}% of {report.difficulty.toLowerCase()} difficulty interviews
+              </p>
+            )}
             {report.hintsUsed > 0 && (
               <span className="mt-2 text-xs text-muted-foreground">
                 {report.hintsUsed} hint{report.hintsUsed > 1 ? 's' : ''} used
@@ -389,6 +549,31 @@ function ReportContent({ report }: Readonly<{ report: ReportDto }>) {
         </Card>
       </div>
 
+      {/* Delta from last session */}
+      {overallDelta !== null && (
+        <div className={cn(
+          'rounded-lg border px-4 py-3 flex items-center gap-3 text-sm',
+          overallDelta >= 0 ? 'border-green-200 bg-green-50' : 'border-red-200 bg-red-50'
+        )}>
+          <span className={cn(
+            'font-bold text-lg tabular-nums shrink-0',
+            overallDelta >= 0 ? 'text-green-700' : 'text-red-700'
+          )}>
+            {overallDelta >= 0 ? '+' : ''}{overallDelta}
+          </span>
+          <span className={cn('text-sm', overallDelta >= 0 ? 'text-green-800' : 'text-red-800')}>
+            from your last interview
+            {mostImproved && overallDelta > 0 && (
+              <span className="text-muted-foreground">
+                {'. '}Biggest improvement:{' '}
+                {dimensionLabels[mostImproved.dimension as keyof typeof dimensionLabels] ?? mostImproved.dimension}
+                {' ('}+{mostImproved.delta.toFixed(1)}{')'}
+              </span>
+            )}
+          </span>
+        </div>
+      )}
+
       {/* Per-dimension progress bars */}
       <Card>
         <CardHeader>
@@ -416,9 +601,7 @@ function ReportContent({ report }: Readonly<{ report: ReportDto }>) {
             <CardTitle>Summary</CardTitle>
           </CardHeader>
           <CardContent>
-            <p className="text-sm leading-relaxed whitespace-pre-line">
-              {report.narrativeSummary}
-            </p>
+            <p className="text-sm leading-relaxed whitespace-pre-line">{report.narrativeSummary}</p>
           </CardContent>
         </Card>
       )}
@@ -442,7 +625,6 @@ function ReportContent({ report }: Readonly<{ report: ReportDto }>) {
             </CardContent>
           </Card>
         )}
-
         {report.weaknesses.length > 0 && (
           <Card>
             <CardHeader className="pb-3">
@@ -460,7 +642,6 @@ function ReportContent({ report }: Readonly<{ report: ReportDto }>) {
             </CardContent>
           </Card>
         )}
-
         {report.suggestions.length > 0 && (
           <Card>
             <CardHeader className="pb-3">
@@ -498,6 +679,25 @@ function ReportContent({ report }: Readonly<{ report: ReportDto }>) {
         </Card>
       )}
 
+      {/* Share card */}
+      <Card className="border-dashed">
+        <CardContent className="flex items-center justify-between gap-4 p-4 flex-wrap">
+          <div className="min-w-0">
+            <p className="text-sm font-medium">Share your result</p>
+            <p className="text-xs text-muted-foreground mt-0.5 truncate">{shareText}</p>
+          </div>
+          <Button
+            size="sm"
+            variant="outline"
+            className="shrink-0 flex items-center gap-1.5"
+            onClick={() => window.open(linkedInShareUrl, '_blank', 'noopener,noreferrer,width=600,height=600')}
+          >
+            <Share2 className="h-4 w-4" />
+            LinkedIn
+          </Button>
+        </CardContent>
+      </Card>
+
       {/* Session details */}
       <Card>
         <CardHeader>
@@ -523,23 +723,46 @@ function ReportContent({ report }: Readonly<{ report: ReportDto }>) {
             </div>
             <div>
               <span className="text-muted-foreground">Completed</span>
-              <p className="font-medium">
-                {new Date(report.completedAt).toLocaleDateString()}
-              </p>
+              <p className="font-medium">{new Date(report.completedAt).toLocaleDateString()}</p>
             </div>
           </div>
         </CardContent>
       </Card>
 
-      {/* CTAs */}
-      <div className="flex items-center justify-center gap-4">
-        <Button variant="outline" asChild>
-          <Link to="/dashboard">Back to Dashboard</Link>
-        </Button>
-        <Button asChild>
-          <Link to="/interview/setup">Start Another Interview</Link>
-        </Button>
+      {/* Next session CTA + back to dashboard */}
+      <div className="space-y-3">
+        {needsAttentionLabel && (
+          <Card className="border-primary/30 bg-primary/5">
+            <CardContent className="flex items-center justify-between p-4 flex-wrap gap-3">
+              <div>
+                <p className="text-sm font-medium">Based on this session</p>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  Try {report.category} {nextDifficulty} focusing on {needsAttentionLabel}
+                </p>
+              </div>
+              <Button size="sm" onClick={handleNextSession}>
+                Practice Now →
+              </Button>
+            </CardContent>
+          </Card>
+        )}
+        <div className="flex items-center justify-center gap-4">
+          <Button variant="outline" asChild>
+            <Link to="/dashboard">Back to Dashboard</Link>
+          </Button>
+          <Button asChild>
+            <Link to="/interview/setup">Start Another Interview</Link>
+          </Button>
+        </div>
       </div>
+
+      {/* Post-session feedback form (fixed bottom-right, appears after 10s) */}
+      {feedbackVisible && !feedbackDismissed && (
+        <FeedbackForm
+          sessionId={report.sessionId}
+          onDismiss={() => setFeedbackDismissed(true)}
+        />
+      )}
     </div>
   )
 }
