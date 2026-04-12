@@ -107,6 +107,15 @@ const { data, isLoading } = useQuery({ queryKey: ['key', id], queryFn: () => api
 registry.sendMessage(sessionId, OutboundMessage.AiChunk(delta = token, done = false))
 ```
 
+## Progress Dashboard (TASK-P2-01)
+- `ProgressService` — `GET /api/v1/users/me/progress` → `ProgressResponse`
+- Dimension trends: last 10 sessions, 8 dimensions (problemSolving, algorithmChoice, codeQuality, communication, efficiency, testing, initiative, learningAgility)
+- Rolling average: last 5 sessions per dimension
+- Insight cards: `mostImproved` (max positive delta), `needsAttention` (lowest avg among stagnant/declining), `platformPercentile` (only when 10+ sessions)
+- Delta = `avg(second half) - avg(first half)` of score list; requires ≥2 data points
+- Frontend: `DashboardPage` rebuilt with toggleable Recharts `LineChart`, insight cards, rolling average table
+- Percentile SQL: `EvaluationReportRepository.countUsersWithAverageBelow()` + `countDistinctUsers()`
+
 ## Cross-Session Memory (TASK-P1-02)
 - `CandidateMemoryProfile` (Redis key: none — stored in Postgres `candidate_memory_profiles` table)
 - `CandidateMemoryService.upsertFromReport()` — called from ReportService after every session
@@ -131,6 +140,8 @@ registry.sendMessage(sessionId, OutboundMessage.AiChunk(delta = token, done = fa
 | EvaluationAgent.kt | Post-session 8-dimension scoring (reads InterviewerBrain only) |
 | CandidateMemoryService.kt | Cross-session memory aggregation + derived insights |
 | MemoryController.kt | GET/DELETE /api/v1/users/me/memory + PATCH memory-enabled |
+| ProgressService.kt | Dimension trends, rolling avg, delta insight cards, platform percentile |
+| ProgressController.kt | GET /api/v1/users/me/progress |
 | ReportService.kt | Score formula + report generation + persistence |
 | CodeExecutionService.kt | Judge0 integration + test result brain actions |
 | InterviewWebSocketHandler.kt | WS message routing |
