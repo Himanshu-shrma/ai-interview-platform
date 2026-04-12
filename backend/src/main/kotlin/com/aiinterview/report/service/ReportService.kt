@@ -13,6 +13,7 @@ import com.aiinterview.report.dto.NextStepDto
 import com.aiinterview.report.dto.ReportDto
 import com.aiinterview.report.dto.ReportSummaryDto
 import com.aiinterview.report.dto.ScoresDto
+import com.aiinterview.report.dto.StudyResourceDto
 import com.aiinterview.report.dto.UserStatsDto
 import com.aiinterview.report.model.EvaluationReport
 import com.aiinterview.report.repository.EvaluationReportRepository
@@ -392,18 +393,26 @@ class ReportService(
     private fun parseNextSteps(json: String?): List<NextStepDto> {
         if (json.isNullOrBlank()) return emptyList()
         return try {
-            objectMapper.readValue(json, object : TypeReference<List<NextStep>>() {}).map {
-                NextStepDto(
-                    area = it.area,
-                    specificGap = it.specificGap,
-                    evidenceFromInterview = it.evidenceFromInterview,
-                    actionItem = it.actionItem,
-                    resource = it.resource,
-                    priority = it.priority,
-                )
-            }
+            objectMapper.readValue(json, object : TypeReference<List<NextStep>>() {}).map { it.toDto() }
         } catch (e: Exception) {
+            log.warn("parseNextSteps failed: {}", e.message)
             emptyList()
         }
     }
+
+    private fun NextStep.toDto() = NextStepDto(
+        // New fields — fall back to legacy field values for pre-P2-02 DB records
+        topic           = topic.ifBlank { area },
+        gap             = gap.ifBlank { specificGap },
+        evidence        = evidence.ifBlank { evidenceFromInterview },
+        resources       = resources.map { r -> StudyResourceDto(type = r.type, id = r.id, url = r.url, title = r.title) },
+        estimatedHours  = estimatedHours,
+        priority        = priority,
+        // Legacy fields — forward-filled for backward compat
+        area                  = area.ifBlank { topic },
+        specificGap           = specificGap.ifBlank { gap },
+        evidenceFromInterview = evidenceFromInterview.ifBlank { evidence },
+        actionItem            = actionItem,
+        resource              = resource,
+    )
 }

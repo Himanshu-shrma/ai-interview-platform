@@ -15,13 +15,27 @@ data class ScoresDto(
     val overall: Double,
 )
 
+data class StudyResourceDto(
+    val type: String,        // "leetcode" | "youtube" | "article"
+    val id: Int?,
+    val url: String,
+    val title: String,
+)
+
 data class NextStepDto(
+    // New structured fields
+    val topic: String,
+    val gap: String,
+    val evidence: String,
+    val resources: List<StudyResourceDto>,
+    val estimatedHours: Int,
+    val priority: String,
+    // Legacy fields — kept so old reports stored before P2-02 still render
     val area: String,
     val specificGap: String,
     val evidenceFromInterview: String,
     val actionItem: String,
     val resource: String,
-    val priority: String,
 )
 
 data class ReportDto(

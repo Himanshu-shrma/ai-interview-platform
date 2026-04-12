@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { Link, useNavigate, useParams } from 'react-router-dom'
 import {
   Radar,
   RadarChart,
@@ -15,8 +15,8 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { cn } from '@/lib/utils'
-import { Loader2 } from 'lucide-react'
-import type { ReportDto, ScoresDto, NextStep } from '@/types'
+import { ExternalLink, Loader2 } from 'lucide-react'
+import type { ReportDto, ScoresDto, NextStep, StudyResource } from '@/types'
 
 // ── Score count-up animation hook ──
 
@@ -158,6 +158,96 @@ function DimensionBar({
   )
 }
 
+// ── Study plan helpers ──
+
+function resourceUrl(r: StudyResource): string {
+  if (r.type === 'leetcode' && r.id) {
+    const slug = r.title.toLowerCase().replace(/\s+/g, '-')
+    return `https://leetcode.com/problems/${slug}/`
+  }
+  return r.url ?? '#'
+}
+
+function resourceLabel(r: StudyResource): string {
+  if (r.type === 'leetcode') return `LeetCode${r.id ? ` #${r.id}` : ''}: ${r.title}`
+  if (r.type === 'youtube') return r.title
+  return r.title
+}
+
+function priorityStyles(p: string): { border: string; badge: string } {
+  if (p === 'HIGH')   return { border: 'border-l-4 border-l-red-500',    badge: 'bg-red-100 text-red-700' }
+  if (p === 'MEDIUM') return { border: 'border-l-4 border-l-yellow-500', badge: 'bg-yellow-100 text-yellow-700' }
+  return                       { border: 'border-l-4 border-l-green-500', badge: 'bg-green-100 text-green-700' }
+}
+
+function StudyPlanCard({ step, onPractice }: Readonly<{ step: NextStep; onPractice: (topic: string) => void }>) {
+  // Support both new schema (topic/gap/evidence) and legacy (area/specificGap/evidenceFromInterview)
+  const topic    = step.topic    || step.area
+  const gap      = step.gap      || step.specificGap
+  const evidence = step.evidence || step.evidenceFromInterview
+  const styles = priorityStyles(step.priority)
+
+  return (
+    <div className={cn('rounded-lg border p-4 space-y-2', styles.border)}>
+      {/* Header row */}
+      <div className="flex items-center justify-between gap-2 flex-wrap">
+        <span className="font-semibold text-sm">{topic}</span>
+        <div className="flex items-center gap-2">
+          {step.estimatedHours > 0 && (
+            <span className="text-xs text-muted-foreground">{step.estimatedHours}h study</span>
+          )}
+          <span className={cn('text-xs px-2 py-0.5 rounded-full font-medium', styles.badge)}>
+            {step.priority}
+          </span>
+        </div>
+      </div>
+
+      {/* Gap description */}
+      {gap && <p className="text-sm text-muted-foreground">{gap}</p>}
+
+      {/* Evidence blockquote */}
+      {evidence && (
+        <blockquote className="border-l-2 border-muted-foreground/30 pl-3 text-xs italic text-muted-foreground">
+          {evidence}
+        </blockquote>
+      )}
+
+      {/* Legacy action item */}
+      {step.actionItem && <p className="text-sm">{step.actionItem}</p>}
+
+      {/* Resource links */}
+      {step.resources && step.resources.length > 0 && (
+        <div className="flex flex-wrap gap-2 pt-1">
+          {step.resources.map((r) => (
+            <a
+              key={`${r.type}-${r.id ?? r.url ?? r.title}`}
+              href={resourceUrl(r)}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1 rounded-md border px-2.5 py-1 text-xs font-medium hover:bg-muted transition-colors"
+            >
+              {resourceLabel(r)}
+              <ExternalLink className="h-3 w-3 shrink-0" />
+            </a>
+          ))}
+        </div>
+      )}
+
+      {/* Legacy plain resource string */}
+      {(!step.resources || step.resources.length === 0) && step.resource && (
+        <p className="text-xs text-blue-600">{step.resource}</p>
+      )}
+
+      {/* Practice CTA */}
+      <div className="pt-1">
+        <Button size="sm" variant="outline" onClick={() => onPractice(topic)}>
+          Practice this topic →
+        </Button>
+      </div>
+    </div>
+  )
+}
+
 // ── Format duration ──
 
 function formatDuration(seconds: number): string {
@@ -228,9 +318,14 @@ export default function ReportPage() {
   return <ReportContent report={report} />
 }
 
-function ReportContent({ report }: { report: ReportDto }) {
+function ReportContent({ report }: Readonly<{ report: ReportDto }>) {
+  const navigate = useNavigate()
   const animatedScore = useCountUp(report.overallScore)
   const radarData = buildRadarData(report.scores)
+
+  function handlePracticeTopic(topic: string) {
+    navigate('/interview/setup', { state: { topic } })
+  }
 
   return (
     <div className="mx-auto max-w-4xl space-y-8 p-6 pb-16">
@@ -392,38 +487,12 @@ function ReportContent({ report }: { report: ReportDto }) {
             <CardTitle>Your Study Plan</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
-            {report.nextSteps.map((step: NextStep, i: number) => (
-              <div
-                key={i}
-                className={cn(
-                  'rounded-lg border p-4 space-y-1',
-                  step.priority === 'HIGH' ? 'border-l-4 border-l-red-500' :
-                  step.priority === 'MEDIUM' ? 'border-l-4 border-l-yellow-500' :
-                  'border-l-4 border-l-green-500'
-                )}
-              >
-                <div className="flex items-center justify-between">
-                  <span className="font-medium text-sm">{step.area}</span>
-                  <span className={cn(
-                    'text-xs px-2 py-0.5 rounded-full font-medium',
-                    step.priority === 'HIGH' ? 'bg-red-100 text-red-700' :
-                    step.priority === 'MEDIUM' ? 'bg-yellow-100 text-yellow-700' :
-                    'bg-green-100 text-green-700'
-                  )}>
-                    {step.priority}
-                  </span>
-                </div>
-                <p className="text-xs text-muted-foreground">{step.specificGap}</p>
-                {step.evidenceFromInterview && (
-                  <p className="text-xs italic text-muted-foreground">
-                    Evidence: {step.evidenceFromInterview}
-                  </p>
-                )}
-                <p className="text-sm">{step.actionItem}</p>
-                {step.resource && (
-                  <p className="text-xs text-blue-600">{step.resource}</p>
-                )}
-              </div>
+            {report.nextSteps.map((step: NextStep) => (
+              <StudyPlanCard
+                key={step.topic || step.area}
+                step={step}
+                onPractice={handlePracticeTopic}
+              />
             ))}
           </CardContent>
         </Card>

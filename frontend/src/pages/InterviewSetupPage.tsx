@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useLocation } from 'react-router-dom'
 import { ArrowLeft, Code2, MessageSquare, Server, GitBranch, Loader2 } from 'lucide-react'
 import { PageHeader } from '@/components/shared/PageHeader'
 import { useStartInterview, useLanguages } from '@/hooks/useInterviews'
@@ -117,6 +117,9 @@ const durations = [30, 45, 60]
 const needsLanguage = (cat?: InterviewCategory) => cat === 'CODING' || cat === 'DSA'
 
 export default function InterviewSetupPage() {
+  const location = useLocation()
+  const prefillTopic = (location.state as { topic?: string } | null)?.topic ?? ''
+
   const [category, setCategory] = useState<InterviewCategory | undefined>()
   const [difficulty, setDifficulty] = useState<Difficulty | undefined>()
   const [personality, setPersonality] = useState('friendly')
@@ -125,7 +128,7 @@ export default function InterviewSetupPage() {
   const [targetCompany, setTargetCompany] = useState('')
   const [durationMinutes, setDurationMinutes] = useState(45)
   const [experienceLevel, setExperienceLevel] = useState('')
-  const [background, setBackground] = useState('')
+  const [background, setBackground] = useState(prefillTopic)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
 
   const { data: languages } = useLanguages()

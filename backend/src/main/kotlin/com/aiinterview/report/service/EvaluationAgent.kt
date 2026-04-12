@@ -10,6 +10,8 @@ import com.aiinterview.shared.ai.LlmRequest
 import com.aiinterview.shared.ai.ModelConfig
 import com.aiinterview.shared.ai.ResponseFormat
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties
+import com.fasterxml.jackson.core.type.TypeReference
+import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.withTimeout
@@ -17,13 +19,28 @@ import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Component
 
 @JsonIgnoreProperties(ignoreUnknown = true)
+data class StudyResource(
+    val type: String = "leetcode",   // "leetcode" | "youtube" | "article"
+    val id: Int? = null,
+    val url: String = "",
+    val title: String = "",
+)
+
+@JsonIgnoreProperties(ignoreUnknown = true)
 data class NextStep(
+    // New structured fields
+    val topic: String = "",
+    val gap: String = "",
+    val evidence: String = "",
+    val resources: List<StudyResource> = emptyList(),
+    val estimatedHours: Int = 1,
+    val priority: String = "MEDIUM",
+    // Legacy fields — kept so old DB records still deserialize cleanly
     val area: String = "",
     val specificGap: String = "",
     val evidenceFromInterview: String = "",
     val actionItem: String = "",
     val resource: String = "",
-    val priority: String = "MEDIUM",
 )
 
 @JsonIgnoreProperties(ignoreUnknown = true)
@@ -99,14 +116,24 @@ class EvaluationAgent(
                 "- testing: Reliability, fault tolerance, monitoring considerations\n\n"
 
         private const val JSON_SCHEMA =
-            "JSON schema:\n" +
+            "JSON schema (return ONLY this object, no other text):\n" +
                 "{\n" +
                 "  \"strengths\": [\"string\"],\n" +
                 "  \"weaknesses\": [\"string\"],\n" +
                 "  \"suggestions\": [\"string\"],\n" +
-                "  \"nextSteps\": [{\"area\": \"string\", \"specificGap\": \"string\", " +
-                "\"evidenceFromInterview\": \"string\", \"actionItem\": \"string\", " +
-                "\"resource\": \"string\", \"priority\": \"HIGH|MEDIUM|LOW\"}],\n" +
+                "  \"nextSteps\": [\n" +
+                "    {\n" +
+                "      \"topic\": \"short topic label\",\n" +
+                "      \"gap\": \"one sentence describing the specific gap observed\",\n" +
+                "      \"evidence\": \"Turn N: exact quote from this interview\",\n" +
+                "      \"resources\": [\n" +
+                "        {\"type\": \"leetcode\", \"id\": 200, \"title\": \"Number of Islands\"},\n" +
+                "        {\"type\": \"youtube\", \"url\": \"https://neetcode.io/...\", \"title\": \"Video title\"}\n" +
+                "      ],\n" +
+                "      \"estimatedHours\": 2,\n" +
+                "      \"priority\": \"HIGH\"\n" +
+                "    }\n" +
+                "  ],\n" +
                 "  \"narrativeSummary\": \"string\",\n" +
                 "  \"dimensionFeedback\": {\n" +
                 "    \"problemSolving\": \"string\",\n" +
@@ -126,7 +153,14 @@ class EvaluationAgent(
                 "    \"initiative\": 5.0,\n" +
                 "    \"learningAgility\": 5.0\n" +
                 "  }\n" +
-                "}"
+                "}\n\n" +
+                "STUDY PLAN RULES:\n" +
+                "- nextSteps: 3-5 items ordered HIGH → MEDIUM → LOW priority.\n" +
+                "- topic: concise label (e.g. \"Graph BFS vs DFS\", \"Hash map design\").\n" +
+                "- evidence: MUST quote an actual turn from this transcript — not generic.\n" +
+                "- resources: include 1-2 leetcode problems AND 1 neetcode.io or YouTube link per item.\n" +
+                "- estimatedHours: realistic study time (1-6).\n" +
+                "- priority: HIGH|MEDIUM|LOW only."
 
         fun systemPromptFor(category: String): String {
             val criteria = when (category.uppercase()) {
@@ -195,7 +229,58 @@ class EvaluationAgent(
         return try {
             objectMapper.readValue(json, EvaluationResult::class.java)
         } catch (e: Exception) {
-            log.warn("JSON parse error in EvaluationAgent: {}", e.message)
+            log.warn("Full JSON parse failed in EvaluationAgent: {} — attempting partial parse", e.message)
+            tryPartialParse(json)
+        }
+    }
+
+    /**
+     * Partial parse fallback: uses Jackson tree to extract each field independently.
+     * This recovers a usable EvaluationResult even when one field (e.g. a nextStep
+     * with an unescaped quote in evidence) causes the full parse to fail.
+     */
+    private fun tryPartialParse(json: String): EvaluationResult? {
+        return try {
+        val node: JsonNode = objectMapper.readTree(json)
+
+        val scoresNode = node.path("scores")
+        if (scoresNode.isMissingNode) {
+            log.warn("EvaluationAgent partial parse: scores missing — giving up")
+            return null
+        }
+        val scores = objectMapper.treeToValue(scoresNode, EvaluationScores::class.java)
+
+        val nextSteps: List<NextStep> = try {
+            val ns = node.path("nextSteps")
+            if (!ns.isMissingNode && ns.isArray)
+                objectMapper.readerForListOf(NextStep::class.java).readValue(ns)
+            else emptyList()
+        } catch (ex: Exception) {
+            log.warn("EvaluationAgent partial parse: nextSteps extraction failed: {}", ex.message)
+            emptyList()
+        }
+
+        val dimFeedback: Map<String, String> = try {
+            objectMapper.convertValue(
+                node.path("dimensionFeedback"),
+                object : TypeReference<Map<String, String>>() {},
+            )
+        } catch (_: Exception) { emptyMap() }
+
+        fun stringList(field: String): List<String> =
+            node.path(field).mapNotNull { it.asText().takeIf { s -> s.isNotBlank() } }
+
+        EvaluationResult(
+            strengths        = stringList("strengths"),
+            weaknesses       = stringList("weaknesses"),
+            suggestions      = stringList("suggestions"),
+            nextSteps        = nextSteps,
+            narrativeSummary = node.path("narrativeSummary").asText(""),
+            dimensionFeedback = dimFeedback,
+            scores           = scores,
+        )
+        } catch (e: Exception) {
+            log.warn("EvaluationAgent partial parse also failed: {}", e.message)
             null
         }
     }

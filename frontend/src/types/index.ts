@@ -166,13 +166,27 @@ export interface ScoresDto {
   overall: number
 }
 
+export interface StudyResource {
+  type: string         // 'leetcode' | 'youtube' | 'article'
+  id?: number          // leetcode problem id
+  url?: string         // youtube / article url
+  title: string
+}
+
 export interface NextStep {
+  // New structured fields (P2-02+)
+  topic: string
+  gap: string
+  evidence: string
+  resources: StudyResource[]
+  estimatedHours: number
+  priority: 'HIGH' | 'MEDIUM' | 'LOW'
+  // Legacy fields (pre-P2-02 reports)
   area: string
   specificGap: string
   evidenceFromInterview: string
   actionItem: string
   resource: string
-  priority: 'HIGH' | 'MEDIUM' | 'LOW'
 }
 
 export interface ReportDto {
