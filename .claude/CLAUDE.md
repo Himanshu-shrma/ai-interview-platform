@@ -55,9 +55,9 @@ All interview events over WS: `ws://localhost:8080/ws/interview/{sessionId}?toke
 
 ## Database
 PostgreSQL 15. R2DBC driver. JSONB stored as TEXT (R2DBC limitation). Enums stored as VARCHAR.
-18 migrations (V1-V18). Next: V19__...sql
+19 migrations (V1-V19). Next: V20__...sql
 
-**Tables**: organizations, users, questions, interview_sessions, session_questions, conversation_messages, code_submissions, evaluation_reports, interview_templates, org_invitations
+**Tables**: organizations, users, questions, interview_sessions, session_questions, conversation_messages, code_submissions, evaluation_reports, interview_templates, org_invitations, candidate_memory_profiles
 
 ## Key Patterns — READ BEFORE CODING
 
@@ -107,6 +107,15 @@ const { data, isLoading } = useQuery({ queryKey: ['key', id], queryFn: () => api
 registry.sendMessage(sessionId, OutboundMessage.AiChunk(delta = token, done = false))
 ```
 
+## Cross-Session Memory (TASK-P1-02)
+- `CandidateMemoryProfile` (Redis key: none — stored in Postgres `candidate_memory_profiles` table)
+- `CandidateMemoryService.upsertFromReport()` — called from ReportService after every session
+- `CandidateHistory` in `InterviewerBrain` — populated by `BrainService.initBrain(candidateMemory=...)`
+- `NaturalPromptBuilder` section 13 — CANDIDATE_HISTORY injected when `brain.candidateHistory != null AND turnCount > 0`
+- Memory opt-out: `users.memory_enabled = false` suppresses injection + upsert
+- Transparency: `GET /api/v1/users/me/memory` returns `DerivedInsights`; `DELETE` resets to zero
+- Toggle: `PATCH /api/v1/users/me/memory-enabled` + `/settings` page in frontend
+
 ## File Map — Critical Files
 | File | Purpose |
 |------|---------|
@@ -119,7 +128,9 @@ registry.sendMessage(sessionId, OutboundMessage.AiChunk(delta = token, done = fa
 | BrainObjectivesRegistry.kt | Goal definitions + computeBrainInterviewState() + inferPhaseLabel() |
 | InterviewerBrain.kt | All brain data classes (47 fields, 15+ enums) |
 | BrainFlowGuard.kt | 4 safety rules |
-| EvaluationAgent.kt | Post-session 8-dimension scoring (reads InterviewMemory + Brain) |
+| EvaluationAgent.kt | Post-session 8-dimension scoring (reads InterviewerBrain only) |
+| CandidateMemoryService.kt | Cross-session memory aggregation + derived insights |
+| MemoryController.kt | GET/DELETE /api/v1/users/me/memory + PATCH memory-enabled |
 | ReportService.kt | Score formula + report generation + persistence |
 | CodeExecutionService.kt | Judge0 integration + test result brain actions |
 | InterviewWebSocketHandler.kt | WS message routing |
@@ -155,6 +166,7 @@ overall = problemSolving*0.20 + algorithm*0.15 + codeQuality*0.15 + communicatio
 | /interview/setup | InterviewSetupPage | Yes |
 | /interview/:sessionId | InterviewPage | Yes |
 | /report/:sessionId | ReportPage | Yes |
+| /settings | AccountSettingsPage | Yes — AI Memory toggle |
 
 ## Onboarding Flow
 - `ProtectedRoute` fetches `getMe()` and redirects to `/onboarding` if `!user.onboardingCompleted`
