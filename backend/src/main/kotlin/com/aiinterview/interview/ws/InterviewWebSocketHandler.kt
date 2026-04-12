@@ -27,6 +27,7 @@ import kotlinx.coroutines.reactor.awaitSingleOrNull
 import kotlinx.coroutines.reactor.mono
 import kotlinx.coroutines.withContext
 import org.slf4j.LoggerFactory
+import org.slf4j.MDC
 import org.springframework.stereotype.Component
 import org.springframework.web.reactive.socket.WebSocketHandler
 import org.springframework.web.reactive.socket.WebSocketSession
@@ -89,7 +90,7 @@ class InterviewWebSocketHandler(
             .thenMany(
                 session.receive().flatMap { wsMsg ->
                     val text = wsMsg.payloadAsText
-                    mono { handleMessage(sessionId, text) }
+                    mono { handleMessage(sessionId, userId, text) }
                 }
             )
             .then()
@@ -273,7 +274,10 @@ class InterviewWebSocketHandler(
 
     // ── Message Routing ───────────────────────────────────────────────────────
 
-    private suspend fun handleMessage(sessionId: UUID, raw: String) {
+    private suspend fun handleMessage(sessionId: UUID, userId: UUID, raw: String) {
+        MDC.put("session_id", sessionId.toString())
+        MDC.put("user_id", userId.toString())
+        try {
         val tree = try {
             objectMapper.readTree(raw)
         } catch (e: Exception) {
@@ -374,6 +378,9 @@ class InterviewWebSocketHandler(
                 log.warn("Unknown WS message type from sessionId={}: {}", sessionId, type)
                 registry.sendMessage(sessionId, OutboundMessage.Error("UNKNOWN_TYPE", "Unknown message type: $type"))
             }
+        }
+        } finally {
+            MDC.clear()
         }
     }
 

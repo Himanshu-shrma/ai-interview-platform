@@ -7,12 +7,20 @@ import reactor.core.publisher.Flux
 import java.util.UUID
 
 interface ConversationMessageRepository : ReactiveCrudRepository<ConversationMessage, UUID> {
-    fun findBySessionIdOrderByCreatedAt(sessionId: UUID): Flux<ConversationMessage>
 
-    /** Returns the last N messages for a session, ordered newest-first. */
     @Query("""
         SELECT * FROM conversation_messages
         WHERE session_id = :sessionId
+          AND deleted_at IS NULL
+        ORDER BY created_at
+    """)
+    fun findBySessionIdOrderByCreatedAt(sessionId: UUID): Flux<ConversationMessage>
+
+    /** Returns the last N non-deleted messages for a session, ordered newest-first. */
+    @Query("""
+        SELECT * FROM conversation_messages
+        WHERE session_id = :sessionId
+          AND deleted_at IS NULL
         ORDER BY created_at DESC
         LIMIT :n
     """)

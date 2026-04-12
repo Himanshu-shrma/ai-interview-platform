@@ -43,6 +43,9 @@ data class Question(
     val codeTemplates: String? = null,
     /** JSONB — function signature metadata for template generation */
     val functionSignature: String? = null,
+    /** Validation status: PENDING | PASSED | FAILED — only PASSED questions reach sessions */
+    val validationStatus: String = "PENDING",
+    val validatedAt: java.time.OffsetDateTime? = null,
 ) {
     // Required because data class contains Array field
     override fun equals(other: Any?): Boolean {

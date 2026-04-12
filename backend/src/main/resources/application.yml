@@ -107,6 +107,16 @@ judge0:
   poll-interval-ms: 500
   poll-timeout-seconds: 30
 
+# ── Sentry — error tracking + session-correlated events ──────────────────────
+sentry:
+  dsn: ${SENTRY_DSN:}
+  traces-sample-rate: 0.1
+  environment: ${SPRING_PROFILES_ACTIVE:local}
+  release: ${APP_VERSION:local}
+  logging:
+    minimum-event-level: error
+    minimum-breadcrumb-level: info
+
 # ── Logging ─────────────────────────────────────────────────────────────────
 logging:
   level:

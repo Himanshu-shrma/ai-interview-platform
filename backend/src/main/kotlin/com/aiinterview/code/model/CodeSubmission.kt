@@ -19,4 +19,5 @@ data class CodeSubmission(
     val runtimeMs: Int? = null,
     val memoryKb: Int? = null,
     val submittedAt: OffsetDateTime? = null,
+    val deletedAt: OffsetDateTime? = null,
 )

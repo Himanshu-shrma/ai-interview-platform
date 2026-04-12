@@ -6,6 +6,7 @@ import com.aiinterview.interview.service.InterviewConfig
 import com.aiinterview.interview.service.QuestionGenerationParams
 import com.aiinterview.interview.service.QuestionGeneratorService
 import com.aiinterview.interview.service.QuestionService
+import com.aiinterview.interview.service.QuestionValidationService
 import com.aiinterview.shared.domain.Difficulty
 import com.aiinterview.shared.domain.InterviewCategory
 import io.mockk.coEvery
@@ -24,9 +25,10 @@ import java.util.UUID
 
 class QuestionServiceTest {
 
-    private val questionRepository       = mockk<QuestionRepository>()
-    private val questionGeneratorService = mockk<QuestionGeneratorService>()
-    private val service                  = QuestionService(questionRepository, questionGeneratorService)
+    private val questionRepository        = mockk<QuestionRepository>()
+    private val questionGeneratorService  = mockk<QuestionGeneratorService>()
+    private val questionValidationService = mockk<QuestionValidationService>(relaxed = true)
+    private val service                   = QuestionService(questionRepository, questionGeneratorService, questionValidationService)
 
     private val codingParams = QuestionGenerationParams(
         category   = InterviewCategory.CODING,

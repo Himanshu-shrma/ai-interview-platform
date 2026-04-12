@@ -4,9 +4,11 @@ import com.aiinterview.user.dto.UserDto
 import com.aiinterview.user.model.User
 import com.aiinterview.user.repository.OrganizationRepository
 import com.aiinterview.user.service.UsageLimitService
+import com.aiinterview.user.service.UserDeletionService
 import kotlinx.coroutines.reactor.awaitSingleOrNull
 import org.springframework.http.ResponseEntity
 import org.springframework.security.core.Authentication
+import org.springframework.web.bind.annotation.DeleteMapping
 import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.RequestMapping
 import org.springframework.web.bind.annotation.RestController
@@ -16,6 +18,7 @@ import org.springframework.web.bind.annotation.RestController
 class AuthController(
     private val organizationRepository: OrganizationRepository,
     private val usageLimitService: UsageLimitService,
+    private val userDeletionService: UserDeletionService,
 ) {
 
     @GetMapping("/me")
@@ -42,5 +45,14 @@ class AuthController(
                 interviewsUsedThisMonth = usedThisMonth,
             )
         )
+    }
+
+    @DeleteMapping("/me")
+    suspend fun deleteAccount(authentication: Authentication): ResponseEntity<Void> {
+        val user = authentication.principal as? User
+            ?: return ResponseEntity.status(401).build()
+        val userId = user.id ?: return ResponseEntity.status(401).build()
+        userDeletionService.deleteUser(userId)
+        return ResponseEntity.noContent().build()
     }
 }

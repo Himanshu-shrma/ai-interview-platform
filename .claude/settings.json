@@ -11,7 +11,12 @@
       "Edit(/.claude/skills/evaluation-scoring/**)",
       "Bash(ls -la .claude/skills/*.md)",
       "Bash(mvn compile:*)",
-      "Bash(npm run:*)"
+      "Bash(npm run:*)",
+      "Bash(mvn surefire:test)",
+      "Bash(ls backend/src/main/resources/db/migration/V16__*.sql)",
+      "Bash(grep -n \"validation_status\" backend/src/main/resources/db/migration/V16__*.sql)",
+      "Bash(ls backend/src/main/resources/db/migration/V17__*.sql)",
+      "Bash(grep -c \"deleted_at\" backend/src/main/resources/db/migration/V17__*.sql)"
     ]
   },
   "language": "Kotlin + TypeScript",

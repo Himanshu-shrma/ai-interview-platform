@@ -37,4 +37,5 @@ data class EvaluationReport(
     val researchNotes: String? = null,
     val completedAt: OffsetDateTime? = null,
     val createdAt: OffsetDateTime? = null,
+    val deletedAt: OffsetDateTime? = null,
 )

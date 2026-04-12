@@ -128,6 +128,13 @@
             <version>${openai-java.version}</version>
         </dependency>
 
+        <!-- Sentry — error tracking + structured event capture -->
+        <dependency>
+            <groupId>io.sentry</groupId>
+            <artifactId>sentry-spring-boot-starter-jakarta</artifactId>
+            <version>7.14.0</version>
+        </dependency>
+
         <!-- Test -->
         <dependency>
             <groupId>org.springframework.boot</groupId>

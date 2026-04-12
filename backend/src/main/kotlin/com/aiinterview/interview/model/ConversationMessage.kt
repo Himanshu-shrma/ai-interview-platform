@@ -14,4 +14,5 @@ data class ConversationMessage(
     /** JSONB — optional metadata (token count, latency, etc.) */
     val metadata: String? = null,
     val createdAt: OffsetDateTime? = null,
+    val deletedAt: OffsetDateTime? = null,
 )

@@ -5,6 +5,7 @@ import com.aiinterview.interview.repository.QuestionRepository
 import kotlinx.coroutines.reactor.awaitSingle
 import kotlinx.coroutines.reactor.awaitSingleOrNull
 import org.slf4j.LoggerFactory
+import org.springframework.context.annotation.Lazy
 import org.springframework.stereotype.Service
 import java.time.OffsetDateTime
 import java.util.UUID
@@ -13,6 +14,7 @@ import java.util.UUID
 class QuestionService(
     private val questionRepository: QuestionRepository,
     private val questionGeneratorService: QuestionGeneratorService,
+    @Lazy private val questionValidationService: QuestionValidationService,
 ) {
     private val log = LoggerFactory.getLogger(QuestionService::class.java)
 
@@ -35,7 +37,10 @@ class QuestionService(
         log.info("No DB question found for category={} difficulty={}, generating via GPT-4o…",
             params.category, params.difficulty)
         val generated = questionGeneratorService.generateQuestion(params)
-        return saveWithUniqueSlug(generated)
+        val saved = saveWithUniqueSlug(generated)
+        // Trigger background validation so this question passes the PASSED filter in future sessions
+        questionValidationService.scheduleValidation(saved)
+        return saved
     }
 
     /**
