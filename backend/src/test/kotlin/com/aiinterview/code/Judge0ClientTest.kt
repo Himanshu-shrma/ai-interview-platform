@@ -3,9 +3,10 @@ package com.aiinterview.code
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.verify
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotNull
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
@@ -45,7 +46,7 @@ class Judge0ClientTest {
     // ── submit ────────────────────────────────────────────────────────────────
 
     @Test
-    fun `submit encodes source code and stdin as Base64 and returns token`() = runBlocking {
+    fun `submit encodes source code and stdin as Base64 and returns token`() = runTest {
         val fakeToken = "abc-token-123"
 
         every { webClient.post() } returns requestBodyUriSpec
@@ -62,7 +63,7 @@ class Judge0ClientTest {
     }
 
     @Test
-    fun `submit with null stdin does not encode stdin`() = runBlocking {
+    fun `submit with null stdin does not encode stdin`() = runTest {
         every { webClient.post() } returns requestBodyUriSpec
         every { requestBodyUriSpec.uri(any<String>()) } returns requestBodySpec
         every { requestBodySpec.contentType(any()) } returns requestBodySpec
@@ -83,7 +84,7 @@ class Judge0ClientTest {
     // ── pollResult ────────────────────────────────────────────────────────────
 
     @Test
-    fun `pollResult returns result when status id is 3`() = runBlocking {
+    fun `pollResult returns result when status id is 3`() = runTest {
         val encoded = Base64.getEncoder().encodeToString("Hello World\n".toByteArray())
         val result  = Judge0Result(
             token         = "tok",
@@ -106,7 +107,7 @@ class Judge0ClientTest {
     }
 
     @Test
-    fun `pollResult decodes stderr and compileOutput`() = runBlocking {
+    fun `pollResult decodes stderr and compileOutput`() = runTest {
         val encodedStderr = Base64.getEncoder().encodeToString("SyntaxError\n".toByteArray())
         val result = Judge0Result(
             token         = "tok",
@@ -128,7 +129,7 @@ class Judge0ClientTest {
     }
 
     @Test
-    fun `pollResult throws Judge0TimeoutException when timeout exceeded`() {
+    fun `pollResult throws Judge0TimeoutException when timeout exceeded`() = runTest {
         // Return status id=1 (In Queue) forever — will trigger timeout
         val queuedResult = Judge0Result(
             token = "tok", status = Judge0Status(1, "In Queue"),
@@ -140,10 +141,9 @@ class Judge0ClientTest {
         every { requestHeadersSpec.retrieve() } returns responseSpec
         every { responseSpec.bodyToMono(Judge0Result::class.java) } returns Mono.just(queuedResult)
 
-        // Client was constructed with 5s timeout and 10ms poll — will time out quickly
-        assertThrows<Judge0TimeoutException> {
-            runBlocking { judge0Client.pollResult("tok") }
-        }
+        // Client was constructed with 5s timeout and 10ms poll — virtual time fast-forwards delay()
+        val ex = kotlin.runCatching { judge0Client.pollResult("tok") }.exceptionOrNull()
+        assertTrue(ex is Judge0TimeoutException, "Expected Judge0TimeoutException but got $ex")
     }
 
     // ── LanguageMap ───────────────────────────────────────────────────────────

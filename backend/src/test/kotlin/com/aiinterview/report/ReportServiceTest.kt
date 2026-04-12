@@ -21,7 +21,7 @@ import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.mockk
 import io.mockk.slot
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.BeforeEach
@@ -120,7 +120,7 @@ class ReportServiceTest {
     }
 
     @Test
-    fun `generateAndSaveReport persists evaluation report with all fields`() = runBlocking {
+    fun `generateAndSaveReport persists evaluation report with all fields`() = runTest {
         val savedReport = slot<EvaluationReport>()
         coEvery { evaluationReportRepository.save(capture(savedReport)) } returns
             Mono.just(EvaluationReport(id = reportId, sessionId = sessionId, userId = userId))
@@ -136,7 +136,7 @@ class ReportServiceTest {
     }
 
     @Test
-    fun `generateAndSaveReport computes overallScore with correct 8-dimension weights`() = runBlocking {
+    fun `generateAndSaveReport computes overallScore with correct 8-dimension weights`() = runTest {
         // 8-dimension weighted formula (weights sum to 1.00):
         // ps=8.0*0.20=1.60, algo=7.0*0.15=1.05, cq=6.0*0.15=0.90,
         // comm=9.0*0.15=1.35, eff=5.0*0.10=0.50, test=4.0*0.10=0.40,
@@ -153,7 +153,7 @@ class ReportServiceTest {
     }
 
     @Test
-    fun `generateAndSaveReport updates session status to COMPLETED`() = runBlocking {
+    fun `generateAndSaveReport updates session status to COMPLETED`() = runTest {
         val savedSession = slot<InterviewSession>()
         coEvery { interviewSessionRepository.save(capture(savedSession)) } returns
             Mono.just(session.copy(status = "COMPLETED"))
@@ -165,14 +165,14 @@ class ReportServiceTest {
     }
 
     @Test
-    fun `generateAndSaveReport increments usage counter`() = runBlocking {
+    fun `generateAndSaveReport increments usage counter`() = runTest {
         service.generateAndSaveReport(sessionId)
 
         coVerify { usageLimitService.incrementUsage(userId) }
     }
 
     @Test
-    fun `generateAndSaveReport sends SESSION_END WS message with reportId`() = runBlocking {
+    fun `generateAndSaveReport sends SESSION_END WS message with reportId`() = runTest {
         service.generateAndSaveReport(sessionId)
 
         coVerify {
@@ -183,7 +183,7 @@ class ReportServiceTest {
     }
 
     @Test
-    fun `generateAndSaveReport is idempotent when report already exists`() = runBlocking {
+    fun `generateAndSaveReport is idempotent when report already exists`() = runTest {
         val existingReport = EvaluationReport(id = reportId, sessionId = sessionId, userId = userId)
         coEvery { evaluationReportRepository.findBySessionId(sessionId) } returns Mono.just(existingReport)
 
@@ -195,7 +195,7 @@ class ReportServiceTest {
     }
 
     @Test
-    fun `generateAndSaveReport returns reportId`() = runBlocking {
+    fun `generateAndSaveReport returns reportId`() = runTest {
         val result = service.generateAndSaveReport(sessionId)
         assertEquals(reportId, result)
     }

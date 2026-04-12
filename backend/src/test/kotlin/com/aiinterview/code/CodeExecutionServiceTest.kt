@@ -19,7 +19,7 @@ import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.mockk
 import io.mockk.slot
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
@@ -69,7 +69,7 @@ class CodeExecutionServiceTest {
     // ── runCode ───────────────────────────────────────────────────────────────
 
     @Test
-    fun `runCode sends CodeResult over WebSocket on success`() = runBlocking {
+    fun `runCode sends CodeResult over WebSocket on success`() = runTest {
         coEvery { judge0Client.submit(any(), any(), any()) } returns "tok-1"
         coEvery { judge0Client.pollResult("tok-1") } returns Judge0Result(
             token = "tok-1",
@@ -92,7 +92,7 @@ class CodeExecutionServiceTest {
     }
 
     @Test
-    fun `runCode sends Error for unsupported language`() = runBlocking {
+    fun `runCode sends Error for unsupported language`() = runTest {
         service.runCode(sessionId, "code", "brainfuck")
 
         val slot = slot<OutboundMessage>()
@@ -102,7 +102,7 @@ class CodeExecutionServiceTest {
     }
 
     @Test
-    fun `runCode sends Error when judge0Client throws`() = runBlocking {
+    fun `runCode sends Error when judge0Client throws`() = runTest {
         coEvery { judge0Client.submit(any(), any(), any()) } throws RuntimeException("Network error")
 
         service.runCode(sessionId, "print(1)", "python")
@@ -116,7 +116,7 @@ class CodeExecutionServiceTest {
     // ── submitCode ────────────────────────────────────────────────────────────
 
     @Test
-    fun `submitCode runs all test cases and persists submission`() = runBlocking {
+    fun `submitCode runs all test cases and persists submission`() = runTest {
         val sessionQuestion = SessionQuestion(
             id         = sessionQuestionId,
             sessionId  = sessionId,
@@ -160,7 +160,7 @@ class CodeExecutionServiceTest {
     }
 
     @Test
-    fun `submitCode transitions to FollowUp when all tests pass`() = runBlocking {
+    fun `submitCode transitions to FollowUp when all tests pass`() = runTest {
         val sessionQuestion = SessionQuestion(
             id         = sessionQuestionId,
             sessionId  = sessionId,
@@ -203,7 +203,7 @@ class CodeExecutionServiceTest {
     }
 
     @Test
-    fun `submitCode sends QUESTION_NOT_FOUND error when session question missing`() = runBlocking {
+    fun `submitCode sends QUESTION_NOT_FOUND error when session question missing`() = runTest {
         coEvery { sessionQuestionRepository.findById(sessionQuestionId) } returns Mono.empty()
 
         service.submitCode(sessionId, sessionQuestionId, "code", "python")
@@ -215,7 +215,7 @@ class CodeExecutionServiceTest {
     }
 
     @Test
-    fun `submitCode sends FAILED status when test case output does not match`() = runBlocking {
+    fun `submitCode sends FAILED status when test case output does not match`() = runTest {
         val sessionQuestion = SessionQuestion(
             id         = sessionQuestionId,
             sessionId  = sessionId,

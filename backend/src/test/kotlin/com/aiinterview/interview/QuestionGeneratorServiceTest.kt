@@ -186,8 +186,9 @@ class QuestionGeneratorServiceTest {
             LlmResponse(content = goodJson, model = "gpt-4o", provider = "openai"),
         )
 
+        // Use BEHAVIORAL to avoid the 3rd generateCodeTemplates LLM call (coding-only)
         val question = service.generateQuestion(
-            QuestionGenerationParams(InterviewCategory.CODING, Difficulty.EASY, "arrays")
+            QuestionGenerationParams(InterviewCategory.BEHAVIORAL, Difficulty.EASY, "arrays")
         )
 
         assertNotNull(question.title)

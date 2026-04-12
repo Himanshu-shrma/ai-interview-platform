@@ -27,8 +27,10 @@ import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.springframework.web.reactive.socket.WebSocketMessage
 import org.springframework.web.reactive.socket.WebSocketSession
+import reactor.core.publisher.Flux
 import reactor.core.publisher.Mono
 import reactor.core.publisher.Sinks
+import reactor.test.StepVerifier
 import java.util.UUID
 
 class InterviewWebSocketHandlerTest {
@@ -67,8 +69,13 @@ class InterviewWebSocketHandlerTest {
             ATTR_USER_ID    to userId,
         )
         every { wsSession.receive() } returns inboundSink.asFlux()
+        every { wsSession.send(any()) } returns Mono.empty()
         every { wsSession.close()   } returns Mono.empty()
         every { wsSession.isOpen    } returns true
+        // onConnect calls findById — must complete so awaitSingleOrNull() returns null
+        every { interviewSessionRepo.findById(any<UUID>()) } returns Mono.empty()
+        // handleReconnectFromBrain calls findRecentBySessionId — must complete
+        every { conversationMessageRepo.findRecentBySessionId(any(), any()) } returns Flux.empty()
     }
 
     // ── connect / reconnect ───────────────────────────────────────────────────
@@ -79,7 +86,7 @@ class InterviewWebSocketHandlerTest {
         coEvery { brainService.getBrainOrNull(sessionId) } returns freshBrain
 
         inboundSink.tryEmitComplete()
-        handler.handle(wsSession).block()
+        StepVerifier.create(handler.handle(wsSession)).verifyComplete()
 
         coVerify {
             registry.sendMessage(sessionId, match { it is OutboundMessage.InterviewStarted })
@@ -92,7 +99,7 @@ class InterviewWebSocketHandlerTest {
 
 
         inboundSink.tryEmitComplete()
-        handler.handle(wsSession).block()
+        StepVerifier.create(handler.handle(wsSession)).verifyComplete()
 
         coVerify {
             registry.sendMessage(sessionId, match {
@@ -107,7 +114,7 @@ class InterviewWebSocketHandlerTest {
         coEvery { brainService.getBrainOrNull(sessionId) } returns existingBrain
 
         inboundSink.tryEmitComplete()
-        handler.handle(wsSession).block()
+        StepVerifier.create(handler.handle(wsSession)).verifyComplete()
 
         coVerify {
             registry.sendMessage(sessionId, match { it is OutboundMessage.StateSync })
@@ -123,7 +130,7 @@ class InterviewWebSocketHandlerTest {
 
         inboundSink.tryEmitNext(mockMessage("""{"type":"PING"}"""))
         inboundSink.tryEmitComplete()
-        handler.handle(wsSession).block()
+        StepVerifier.create(handler.handle(wsSession)).verifyComplete()
 
         coVerify { registry.sendMessage(sessionId, match { it is OutboundMessage.Pong }) }
     }
@@ -137,7 +144,7 @@ class InterviewWebSocketHandlerTest {
 
         inboundSink.tryEmitNext(mockMessage("""{"type":"CODE_UPDATE","code":"val x = 1","language":"kotlin"}"""))
         inboundSink.tryEmitComplete()
-        handler.handle(wsSession).block()
+        StepVerifier.create(handler.handle(wsSession)).verifyComplete()
 
         coVerify { brainService.updateBrain(sessionId, any()) }
     }
@@ -151,7 +158,7 @@ class InterviewWebSocketHandlerTest {
 
         inboundSink.tryEmitNext(mockMessage("""{"type":"END_INTERVIEW","reason":"CANDIDATE_ENDED"}"""))
         inboundSink.tryEmitComplete()
-        handler.handle(wsSession).block()
+        StepVerifier.create(handler.handle(wsSession)).verifyComplete()
 
         coVerify { conversationEngine.forceEndInterview(sessionId) }
     }
@@ -165,7 +172,7 @@ class InterviewWebSocketHandlerTest {
 
         inboundSink.tryEmitNext(mockMessage("""not valid json at all"""))
         inboundSink.tryEmitComplete()
-        handler.handle(wsSession).block()
+        StepVerifier.create(handler.handle(wsSession)).verifyComplete()
 
         coVerify { registry.sendMessage(sessionId, match { it is OutboundMessage.Error }) }
     }
@@ -178,7 +185,7 @@ class InterviewWebSocketHandlerTest {
 
 
         inboundSink.tryEmitComplete()
-        handler.handle(wsSession).block()
+        StepVerifier.create(handler.handle(wsSession)).verifyComplete()
 
         coVerify { registry.register(sessionId, wsSession) }
         coVerify { registry.deregister(sessionId) }
@@ -190,7 +197,7 @@ class InterviewWebSocketHandlerTest {
     fun `missing ATTR_SESSION_ID closes session immediately`() {
         every { wsSession.attributes } returns mutableMapOf<String, Any>()
 
-        handler.handle(wsSession).block()
+        StepVerifier.create(handler.handle(wsSession)).verifyComplete()
 
         coVerify(exactly = 0) { registry.register(any(), any()) }
     }

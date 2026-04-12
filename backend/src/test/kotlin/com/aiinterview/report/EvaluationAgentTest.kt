@@ -9,7 +9,7 @@ import com.aiinterview.shared.ai.ModelConfig
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import io.mockk.coEvery
 import io.mockk.mockk
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNotNull
@@ -50,7 +50,7 @@ class EvaluationAgentTest {
     }
 
     @Test
-    fun `evaluate returns EvaluationResult with all fields`() = runBlocking {
+    fun `evaluate returns EvaluationResult with all fields`() = runTest {
         val json = """
             {
               "strengths": ["Good problem approach", "Clear communication"],
@@ -80,7 +80,7 @@ class EvaluationAgentTest {
     }
 
     @Test
-    fun `evaluate retries once on parse failure and returns result`() = runBlocking {
+    fun `evaluate retries once on parse failure and returns result`() = runTest {
         val badJson = "this is not valid json at all"
         val goodJson = """{"strengths":["ok"],"weaknesses":[],"suggestions":[],"narrativeSummary":"good","dimensionFeedback":{}}"""
 
@@ -95,7 +95,7 @@ class EvaluationAgentTest {
     }
 
     @Test
-    fun `evaluate returns default result when both attempts fail`() = runBlocking {
+    fun `evaluate returns default result when both attempts fail`() = runTest {
         coEvery { llm.complete(any()) } returns LlmResponse(
             content = "{ invalid json }", model = "gpt-4o", provider = "openai",
         )
@@ -108,7 +108,7 @@ class EvaluationAgentTest {
     }
 
     @Test
-    fun `evaluate prompt includes code context`() = runBlocking {
+    fun `evaluate prompt includes code context`() = runTest {
         stubLlm("""{"strengths":[],"weaknesses":[],"suggestions":[],"narrativeSummary":"ok","dimensionFeedback":{}}""")
 
         val brainWithCode = brain.copy(currentCode = "def solution(): pass")
