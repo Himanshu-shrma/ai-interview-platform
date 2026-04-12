@@ -9,6 +9,8 @@ import type {
   UserStatsDto,
   PagedResponse,
   User,
+  OnboardingRequest,
+  OnboardingRecommendation,
 } from '@/types'
 
 const api = axios.create({
@@ -37,6 +39,11 @@ api.interceptors.request.use(async (config) => {
 
 export async function getMe(): Promise<User> {
   const { data } = await api.get<User>('/api/v1/users/me')
+  return data
+}
+
+export async function postOnboarding(req: OnboardingRequest): Promise<OnboardingRecommendation> {
+  const { data } = await api.post<OnboardingRecommendation>('/api/v1/users/me/onboarding', req)
   return data
 }
 

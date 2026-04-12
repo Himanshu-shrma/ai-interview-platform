@@ -43,6 +43,7 @@ class AuthController(
                 orgType = org.type,
                 plan = org.plan,
                 interviewsUsedThisMonth = usedThisMonth,
+                onboardingCompleted = user.onboardingCompleted,
             )
         )
     }

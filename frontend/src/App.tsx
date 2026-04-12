@@ -1,15 +1,26 @@
-import { Routes, Route, Navigate } from 'react-router-dom'
+import { Routes, Route, Navigate, useLocation } from 'react-router-dom'
 import { SignIn, SignUp, useAuth } from '@clerk/clerk-react'
+import { useQuery } from '@tanstack/react-query'
 import { type ReactNode } from 'react'
 import DashboardPage from '@/pages/DashboardPage'
 import InterviewSetupPage from '@/pages/InterviewSetupPage'
 import InterviewPage from '@/pages/InterviewPage'
 import ReportPage from '@/pages/ReportPage'
+import OnboardingPage from '@/pages/OnboardingPage'
+import { getMe } from '@/lib/api'
 
-function ProtectedRoute({ children }: { children: ReactNode }) {
+function ProtectedRoute({ children }: Readonly<{ children: ReactNode }>) {
   const { isSignedIn, isLoaded } = useAuth()
+  const location = useLocation()
 
-  if (!isLoaded) {
+  const { data: user, isLoading: userLoading } = useQuery({
+    queryKey: ['me'],
+    queryFn: getMe,
+    enabled: isLoaded && !!isSignedIn,
+    staleTime: 60_000,
+  })
+
+  if (!isLoaded || (isSignedIn && userLoading)) {
     return (
       <div className="flex min-h-screen items-center justify-center">
         <div className="animate-pulse text-muted-foreground">Loading...</div>
@@ -19,6 +30,11 @@ function ProtectedRoute({ children }: { children: ReactNode }) {
 
   if (!isSignedIn) {
     return <Navigate to="/sign-in" replace />
+  }
+
+  // Redirect new users to onboarding — but never redirect from /onboarding itself
+  if (user && !user.onboardingCompleted && location.pathname !== '/onboarding') {
+    return <Navigate to="/onboarding" replace />
   }
 
   return <>{children}</>
@@ -57,6 +73,14 @@ export default function App() {
           <div className="flex min-h-screen items-center justify-center">
             <SignUp routing="path" path="/sign-up" />
           </div>
+        }
+      />
+      <Route
+        path="/onboarding"
+        element={
+          <ProtectedRoute>
+            <OnboardingPage />
+          </ProtectedRoute>
         }
       />
       <Route

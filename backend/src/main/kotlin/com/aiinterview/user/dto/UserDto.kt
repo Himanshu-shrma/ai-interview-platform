@@ -11,4 +11,5 @@ data class UserDto(
     val orgType: String,
     val plan: String,
     val interviewsUsedThisMonth: Int,
+    val onboardingCompleted: Boolean = false,
 )

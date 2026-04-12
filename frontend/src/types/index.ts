@@ -7,6 +7,22 @@ export interface User {
   fullName: string
   plan: 'FREE' | 'PRO'
   createdAt: string
+  onboardingCompleted: boolean
+}
+
+// ── Onboarding ──
+
+export interface OnboardingRequest {
+  roleTarget: string      // "swe" | "senior_swe" | "staff" | "switching"
+  urgency: string         // "active" | "preparing" | "exploring"
+  biggestChallenge: string // "algorithms" | "system_design" | "behavioral" | "communication"
+}
+
+export interface OnboardingRecommendation {
+  category: string
+  difficulty: string
+  personality: string
+  rationale: string
 }
 
 // ── Interview ──

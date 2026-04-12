@@ -55,7 +55,7 @@ All interview events over WS: `ws://localhost:8080/ws/interview/{sessionId}?toke
 
 ## Database
 PostgreSQL 15. R2DBC driver. JSONB stored as TEXT (R2DBC limitation). Enums stored as VARCHAR.
-15 migrations (V1-V15). Next: V16__...sql
+18 migrations (V1-V18). Next: V19__...sql
 
 **Tables**: organizations, users, questions, interview_sessions, session_questions, conversation_messages, code_submissions, evaluation_reports, interview_templates, org_invitations
 
@@ -150,10 +150,18 @@ overall = problemSolving*0.20 + algorithm*0.15 + codeQuality*0.15 + communicatio
 | / | LandingPage | No |
 | /sign-in/* | Clerk SignIn | No |
 | /sign-up/* | Clerk SignUp | No |
+| /onboarding | OnboardingPage | Yes — shown to new users (onboardingCompleted=false) |
 | /dashboard | DashboardPage | Yes |
 | /interview/setup | InterviewSetupPage | Yes |
 | /interview/:sessionId | InterviewPage | Yes |
 | /report/:sessionId | ReportPage | Yes |
+
+## Onboarding Flow
+- `ProtectedRoute` fetches `getMe()` and redirects to `/onboarding` if `!user.onboardingCompleted`
+- `OnboardingPage`: 3-step wizard (questions → recommendation → launch)
+- `POST /api/v1/users/me/onboarding` sets `onboarding_completed=true`, returns `OnboardingRecommendation`
+- Recommendation matrix: `OnboardingService.recommend()` — exploring→EASY, staff→SYSTEM_DESIGN/HARD, switching→BEHAVIORAL, senior_swe+active→HARD, else→MEDIUM
+- Redis cache evicted via `UserBootstrapService.evictCache()` after onboarding save
 
 ## Agent Skills — Read Before Work
 | Skill | When To Read | Location |
